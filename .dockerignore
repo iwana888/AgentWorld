@@ -1,0 +1,27 @@
+# Go
+bin/
+logs/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Frontend
+web/node_modules/
+web/dist/
+
+# Git
+.git/
+.gitignore
+
+# IDE / OS
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db
+
+# Misc
+err.txt
+vet.txt
+out.txt

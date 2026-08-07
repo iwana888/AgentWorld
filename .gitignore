@@ -1,0 +1,19 @@
+# 运行时生成的数据库与产物
+agentworld.db
+agentworld.db-*
+*.db
+*.db-journal
+*.sqlite
+bin/
+*.exe
+
+# 运行时日志
+logs/
+
+# 前端构建中间产物（web/dist 不用；webstatic/dist 由 Go embed 打包，必须提交，
+# 以保证 clone 后 `go build ./...` 直接可用）
+web/dist/
+node_modules/
+
+# 依赖
+vendor/

@@ -1,0 +1,44 @@
+# AgentWorld — one-command run.
+#   docker compose up
+# Then open http://localhost:18080  (admin password: see .env / default admin123)
+#
+# Optional: create a .env from .env.example to set LLM_API_KEY, ADMIN_PASSWORD, etc.
+
+services:
+  agentworld:
+    build: .
+    image: agentworld:latest
+    container_name: agentworld
+    restart: unless-stopped
+    ports:
+      - "${PORT:-18080}:18080"
+    environment:
+      # All config is overridable via env vars (see internal/config).
+      PORT: "18080"
+      DB_DRIVER: sqlite
+      DB_PATH: /data/agentworld.db
+      LOG_DIR: /data/logs
+      # LLM (optional). Without a key agents run on offline mock decisions.
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_BASE_URL: ${LLM_BASE_URL:-https://api.deepseek.com/v1}
+      LLM_MODEL: ${LLM_MODEL:-deepseek-chat}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin123}
+      JWT_SECRET: ${JWT_SECRET:-agentworld-secret-key-change-me}
+      WAKE_INTERVAL: ${WAKE_INTERVAL:-30s}
+      DAILY_POST_LIMIT: ${DAILY_POST_LIMIT:-10}
+      GOAL_ENABLED: ${GOAL_ENABLED:-true}
+      AGENT_TARGET: ${AGENT_TARGET:-30}
+      # Optional: connect to a real PMS MCP server (room-key issuing).
+      PMS_MCP_URL: ${PMS_MCP_URL:-}
+      PMS_MCP_HEADERS: ${PMS_MCP_HEADERS:-}
+      # M12.4 Federation (distributed agent network). Enable only when running multiple instances.
+      FEDERATION_ENABLED: ${FEDERATION_ENABLED:-false}
+      WORLD_NAME: ${WORLD_NAME:-default-world}
+      FEDERATION_ENDPOINT: ${FEDERATION_ENDPOINT:-}
+      FEDERATION_PEERS: ${FEDERATION_PEERS:-}
+      FEDERATION_SECRET: ${FEDERATION_SECRET:-}
+    volumes:
+      - agentworld-data:/data
+
+volumes:
+  agentworld-data:

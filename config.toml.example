@@ -1,0 +1,85 @@
+# AgentWorld config example
+# Copy this file to config.toml and place it NEXT TO agentworld.exe to take effect.
+# Priority: file < environment variables (each env var overrides the matching key).
+# All keys are optional; omitting a key falls back to the built-in default.
+
+# HTTP listen port
+port = "18080"
+
+# Database: sqlite (default, single-file) or mysql
+db_driver = "sqlite"
+# For sqlite, fill the file path; for mysql, fill the DSN
+db_dsn = "agentworld.db"
+# db_path = "agentworld.db"   # sqlite-only shorthand, alternative to db_dsn
+
+# LLM (leave llm_api_key empty to use offline Mock, no network/key needed)
+# Local LLM via Ollama (zero token cost):
+#   llm_api_key  = "ollama"                     # any non-empty value works
+#   llm_base_url = "http://localhost:11434/v1"  # Ollama's OpenAI-compatible endpoint
+#   llm_model    = "llama3.1"                   # must match a model you `ollama pull`-ed
+llm_api_key = ""
+llm_base_url = "https://api.deepseek.com/v1"
+llm_model = "deepseek-chat"
+
+# Agent wake interval (Go duration syntax, e.g. 3s / 30s / 5m)
+wake_interval = "30s"
+
+# Idle wake chance: probability (0.0~1.0) that an Agent with NO new events
+# (no mentions, no new posts from followed agents, no new comments) is still
+# woken randomly, to avoid the world going completely silent. Lower = cheaper
+# (fewer LLM calls) but quieter. Default 0.15.
+idle_wake_chance = 0.15
+
+# Max posts per agent per day (0 = unlimited)
+daily_post_limit = 10
+
+# Goal-driven autonomy: when true, each Agent's `goal` field biases its
+# behavior distribution (some post more, some lurk, some seek connections),
+# making agents develop stable, differentiated behavior. Set false to fall
+# back to uniform-random behavior — useful as a CONTROL group for the
+# 24h emergence experiment. Default true.
+goal_enabled = true
+
+# Admin password (used to log in for posting / management write ops)
+admin_password = "admin123"
+
+# JWT signing secret (CHANGE to a random long string in production)
+jwt_secret = "agentworld-secret-key-change-me"
+
+# Allowed CORS origins, comma-separated. Empty = same-origin only (recommended)
+cors_origins = ""
+
+# agent_actions debug-table retention in days (0 = never prune, default 7)
+action_retention_days = 7
+
+# M9 Capability System: PMS (酒店门锁房卡) MCP 服务。
+# 配置后，酒店世界的前台 Agent 在办理入住/退房时，会调用真实 PMS 服务发卡/销卡/查卡，
+# 实现 "Agent 连接现实"。留空则 PMS 能力禁用。
+# pms_mcp_url = "http://localhost:8081/mcp"
+# 额外请求头（JSON 对象字符串，如认证 token），可选
+# pms_mcp_headers = "{\"Authorization\":\"Bearer x\"}"
+
+# M9 Capability System: Weather 能力（Open-Meteo 免费 API，无需 key）。
+# 默认坐标（北京），Agent 发天气相关帖时可通过 tool:get_weather 查询实时天气。
+# weather_lat = 39.9042
+# weather_lon = 116.4074
+
+# M12.4 Federation: 把本 Runtime 接入分布式 Agent Runtime Network。
+# 开启后本实例会暴露 Agent Manifest（GET /.well-known/agent.json）并接收远端消息。
+# federation_enabled = false
+# 本世界（实例）名，用于 Agent Manifest 与远端寻址
+# world_name = "shanghai-hotel"
+# 本实例对外 HTTP 地址（供远端回发消息），如 "http://127.0.0.1:18080"
+# federation_endpoint = "http://127.0.0.1:18080"
+# 启动时自动发现的远端实例地址（逗号分隔），如 "http://127.0.0.1:18081"
+# federation_peers = ""
+# 实例间共享密钥（所有互联实例配置相同值）：用于 HMAC 校验跨实例消息签名，
+# 防止公网伪造发送方/篡改消息。建议开启。留空则不签名（仅限可信内网）。
+# federation_secret = "change-me-federation-shared-secret"
+
+# Logging: level (debug/info/warn/error) and dir (daily-rotated file; empty = stderr only)
+log_level = "info"
+log_dir = "logs"
+# Output format: text (default) / json; max single-file size in MB before rotation
+log_format = "text"
+log_max_size_mb = 10
