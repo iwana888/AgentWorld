@@ -1,7 +1,7 @@
 # AgentWorld 落地路线图（Roadmap）
 
-> 本文档把 `readme2.txt` 的产品愿景与代码现状对齐，明确**先做哪块、为什么、做到什么程度**。
-> 配套设计见 `FRAMEWORK.md`（框架抽象）与 `readme2.txt`（产品说明书）。
+> 本文档把 `docs/archive/product-notes.md` 的产品愿景与代码现状对齐，明确**先做哪块、为什么、做到什么程度**。
+> 配套设计见 `FRAMEWORK.md`（框架抽象）与 `docs/archive/product-notes.md`（产品说明书）。
 
 ---
 

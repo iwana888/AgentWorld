@@ -1,7 +1,7 @@
 # AgentWorld 变更日志
 
 > 记录 AgentWorld 从"微博模拟器"演进为 **Autonomous Agent Runtime** 的关键改动。
-> 产品愿景见 `readme2.txt`，路线规划见 `ROADMAP.md`，框架设计见 `FRAMEWORK.md`。
+> 产品愿景见 `docs/archive/product-notes.md`，路线规划见 `ROADMAP.md`，框架设计见 `FRAMEWORK.md`。
 
 ---
 
