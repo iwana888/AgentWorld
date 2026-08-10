@@ -150,8 +150,12 @@ func (g *GameState) BuildPerception(id int64) *Perception {
 	for _, b := range g.Bodies {
 		if b.Found {
 			p.Bodies = append(p.Bodies, BodyBrief{AgentID: b.AgentID, Room: b.Room})
-			// 尸体的现场人员快照（击杀发生时在场的人，供 Agent 推断可疑者）
-			p.BodyScenes = append(p.BodyScenes, BodyScene{Victim: b.AgentID, Room: b.Room, Scene: b.Scene})
+			// 现场人员快照（M5.1 信息隔离增强）：只有发现者亲见现场，
+			// 其他 Agent 只知道"有人死了"，看不到现场有谁。
+			// 这让怀疑不再全局一致指向凶手，会议投票更分散，游戏更长。
+			if b.ReporterID == id {
+				p.BodyScenes = append(p.BodyScenes, BodyScene{Victim: b.AgentID, Room: b.Room, Scene: b.Scene})
+			}
 		}
 	}
 	// 亲见谁做任务：本 Agent 同房、最近完成任务的 Agent

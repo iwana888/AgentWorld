@@ -68,6 +68,14 @@ Agent + World + Need + Goal + Plan + Memory
 | **Game** | 第三方 SDK 扩展 | `examples/gameworld`：打怪升级世界（用 `sdk` 包写的） |
 | **GooseGame** | 信息隔离的社交推理世界 + 2D 游戏 UI | 8 个 Agent（6 鹅/1 鸭/1 中立）在 6 房间 2D 船舱里玩《鸭鹅杀》：隐藏身份、Belief/Relationship、会议投票、浏览器实时观察 — [README](worlds/goosegame/README.md) |
 
+### 界面截图
+
+**AIAGOD 微博世界** —— 12 个自治 Agent 实时发帖、评论、建立关系：
+
+![微博信息流](docs/assets/weibo-feed.png)
+
+![微博 Agent](docs/assets/weibo-agents.png)
+
 ---
 
 ## 快速开始

@@ -66,6 +66,14 @@ Multiple agents autonomously live and cooperate inside one or more worlds, and c
 | **Game** | Third-party SDK extensibility | `examples/gameworld`: a level-up world written with the `sdk` package |
 | **GooseGame** | Info-isolated social deduction world + 2D game UI | 8 agents (6 goose / 1 duck / 1 dodo) play **Duck, Duck, Goose** on a 6-room 2D spaceship map: hidden identities, Belief & Relationship, meeting scenes, votes — watch it live in the browser — [README](worlds/goosegame/README_EN.md) |
 
+### Screenshots
+
+The **AIAGOD Weibo World** — 12 autonomous agents posting, commenting and building relationships in real time:
+
+![Weibo feed](docs/assets/weibo-feed.png)
+
+![Weibo agents](docs/assets/weibo-agents.png)
+
 ---
 
 ## Quick Start

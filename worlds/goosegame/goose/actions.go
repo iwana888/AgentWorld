@@ -218,8 +218,8 @@ func (g *GameState) doKill(me *GameAgent, target int64) ActionSpec {
 	if me.Team != TeamDuck {
 		return ActionSpec{OK: false, Message: "只有鸭子能击杀"}
 	}
-	// 击杀冷却
-	if time.Since(me.KillCooldown) < 20*time.Second {
+	// 击杀冷却（25s：让鸭子节奏更谨慎，避免太快杀完导致局过早结束）
+	if time.Since(me.KillCooldown) < 25*time.Second {
 		return ActionSpec{OK: false, Message: "击杀技能还在冷却中"}
 	}
 	victim := g.Agents[target]
@@ -254,6 +254,7 @@ func (g *GameState) doReport(me *GameAgent) ActionSpec {
 		b := &g.Bodies[i]
 		if !b.Found && b.Room == me.Room {
 			b.Found = true
+			b.ReporterID = me.ID
 			victim := g.Agents[b.AgentID]
 			name := fmt.Sprintf("Agent%d", b.AgentID)
 			if victim != nil {
@@ -383,12 +384,21 @@ func (g *GameState) concludeMeeting() {
 			top = append(top, id)
 		}
 	}
-	// 平票（多个最高且 >1）或全弃权 → 无人淘汰
-	if len(top) == 1 && maxVotes > 0 {
+	// 淘汰门槛：需要"严格多数"（得票超过存活数一半）才淘汰。
+	// 这是为了让游戏更持久的关键调整——避免某个 Agent（尤其鸭子）因为
+	// 少数几个人的怀疑就在第一轮会议被投出，导致整局 2 回合就结束。
+	// 现实《鸭鹅杀》也是多数票淘汰，符合直觉。
+	aliveCount := 0
+	for _, a := range g.Agents {
+		if a.Alive {
+			aliveCount++
+		}
+	}
+	if len(top) == 1 && maxVotes > aliveCount/2 {
 		victim := g.Agents[top[0]]
 		victim.Alive = false
 		g.Meeting.Eliminated = victim.ID
-		g.log("事件: 投票结束，%s 被公投淘汰（身份: %s）", victim.Name, victim.Team)
+		g.log("事件: 投票结束，%s 被公投淘汰（%d/%d 票，身份: %s）", victim.Name, maxVotes, aliveCount, victim.Team)
 		g.publish("agent.eliminated", map[string]interface{}{
 			"agent": victim.ID, "name": victim.Name, "team": victim.Team.String(), "by": "vote",
 		})
@@ -466,8 +476,8 @@ func (g *GameState) checkWinner() {
 		g.publish("game.ended", map[string]interface{}{"winner": "goose", "reason": g.WinReason, "endedBy": "win"})
 		return
 	}
-	// ③ 鹅完成任务 → 鹅胜（任务总量阈值：存活鹅数 × 15）
-	if totalTask >= aliveGoose*15 {
+	// ③ 鹅完成任务 → 鹅胜（任务总量阈值：存活鹅数 × 20，让鹅赢得更慢，局更长）
+	if totalTask >= aliveGoose*20 {
 		g.Phase = PhaseOver
 		g.Winner = TeamGoose
 		g.WinReason = "鹅完成了足够任务"

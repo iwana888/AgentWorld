@@ -261,6 +261,10 @@ type Body struct {
 	// Scene 击杀发生时在房间里的 Agent（现场人员快照，供 Agent 推断可疑者）。
 	// 基于"事件时位置"而非"发现时位置"：5 秒后才进房间的人不算现场。
 	Scene []int64
+	// ReporterID 发现并报告这具尸体的 Agent（M5.1 信息隔离增强）：
+	// 只有发现者亲见"现场人员"，其他 Agent 只能听到"有人死了"。
+	// 这让怀疑不再全局一致指向凶手，会议投票更分散，游戏自然更长。
+	ReporterID int64
 }
 
 // Meeting 一次会议（尸体发现或触发后进入）。
@@ -308,7 +312,8 @@ type GameState struct {
 const (
 	// MaxGameDuration 一局游戏的最大时长：超时后按当前可判定状态裁决（系统安全阀，
 	// 不是正常胜利条件，日志必须明确标记 timeout）。
-	MaxGameDuration = 10 * time.Minute
+	// 30 分钟：给录视频 / 观察涌现行为留足时间，避免正常局过早被安全阀截断。
+	MaxGameDuration = 30 * time.Minute
 )
 
 // NewGame 初始化一局游戏：分配 8 个 Agent 的身份（6 鹅 / 1 鸭 / 1 中立）。

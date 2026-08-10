@@ -6,6 +6,8 @@ AgentWorld 的第一个**游戏世界**（showcase demo），演示在 `agentwor
 
 8 个 Agent 分到隐藏身份（6 鹅 / 1 鸭 / 1 中立），在 6 个房间（一个 2D 船舱）里自由移动、做任务、击杀、发现尸体、开会讨论、投票淘汰——游戏自动进行。通过 **AI 社会观察台**（M5 / M5.1）在浏览器里实时观看这场微型社会。
 
+![2D 鸭鹅杀观察台全景](screenshots/01-map-game-over.png)
+
 ## 玩法规则
 
 - **8 名 Agent**，随机分配隐藏身份：**6 鹅 / 1 鸭 / 1 中立（Dodo）**。
@@ -16,7 +18,7 @@ AgentWorld 的第一个**游戏世界**（showcase demo），演示在 `agentwor
   2. 鸭全灭 → **鹅胜**
   3. 任务达标 → **鹅胜**
   4. Dodo 被投 → **Dodo 胜**
-- 超时兜底：单局 10 分钟自动结算（`EndedBy` 区分 `win` / `timeout`）。
+- 超时兜底：单局 30 分钟自动结算（`EndedBy` 区分 `win` / `timeout`），给录视频 / 观察涌现留足时间。
 
 ## 为什么它"像社会"而不是"脚本"
 
@@ -25,6 +27,7 @@ AgentWorld 的第一个**游戏世界**（showcase demo），演示在 `agentwor
 | 概念 | 实现 | 说明 |
 |---|---|---|
 | **信息隔离** | `Perceive` 只给每个 Agent 自己的视角投影 | Agent 接触不到真实 `GameState`，看不到全图、不知道谁是鸭子 |
+| **线索不全局可见** | 尸体现场人员只对**发现者**可见 | 其他 Agent 只知道"有人死了"，看不到现场有谁 → 怀疑不再全局一致指向凶手，会议投票更分散，游戏更长 |
 | **Belief（私有）** | `Belief{Suspicions map[int64]float64}` | 主观怀疑，只由该 Agent 自己的感知更新，其他 Agent 与观战不暴露 |
 | **Relationship（偏置）** | `Relationships map[int64]float64`（-1~+1） | 关系是**决策偏置**，不修改 Belief；指控会 -0.15 好感 |
 | **角色 ≠ 行为** | Planner 只喂 `Goal` 不硬编码行为 | 没有"因为角色是 X 所以投 Y"；决策由 Belief + Goal 派生 |
@@ -48,6 +51,14 @@ AgentWorld 的第一个**游戏世界**（showcase demo），演示在 `agentwor
 | ⑦ | **发言气泡** | 会议中 Agent 发言以气泡形式逐条呈现 |
 | ⑧ | **投票** | 会议大厅内的投票流程 |
 | ⑨ | **Inspector 保留** | 点击角色 → 查看它的内心世界（Belief / Relationship / Goal / Last Decision / Memory） |
+
+行动阶段（Agent 在 6 个房间空间里自由移动）：
+
+![行动阶段第 4 回合](screenshots/02-map-action-round4.png)
+
+发现尸体后立即切换到紧急会议场景（第二个核心场景，圆桌座位）：
+
+![紧急会议场景](screenshots/03-meeting-empty.png)
 
 ### 游戏 UI 与 Agent 内部状态分层
 
@@ -110,7 +121,7 @@ go run ./worlds/goosegame/cmd/goose
 | 变量 | 默认 | 说明 |
 |---|---|---|
 | `GOOSE_DB` | `goosegame.db` | 游戏数据库路径（独立于微博世界） |
-| `GOOSE_INTERVAL` | `5s` | 唤醒间隔（游戏节奏） |
+| `GOOSE_INTERVAL` | `5s` | 唤醒间隔（游戏节奏）。**调大 = 游戏更慢、每局更持久**（录视频推荐 8~15s） |
 | `GOOSE_OBS_ADDR` | `:19090` | 观测服务监听地址 |
 | `LLM_API_KEY` | — | 有则用 LLM 决策；否则全部规则 Mock（零成本） |
 | `LLM_BASE_URL` / `LLM_MODEL` | DeepSeek | LLM 端点 / 模型（也支持 Ollama） |
@@ -126,6 +137,28 @@ npm run dev        # http://localhost:5199
 ```
 
 Vite dev server 会把 `/api` 代理到后端 `:19090`。
+
+### 录视频 / 让一局更长
+
+打开浏览器想看到"一场正在进行的鸭鹅杀"、或录一段视频时，建议**放慢节奏**：
+
+```bash
+# Windows (PowerShell)
+$env:GOOSE_INTERVAL="12s"; go run ./worlds/goosegame/cmd/goose
+
+# macOS / Linux
+GOOSE_INTERVAL=12s go run ./worlds/goosegame/cmd/goose
+```
+
+让一局更持久的机制（无需额外配置，默认已生效）：
+
+- **线索不全局可见**：尸体现场人员只对发现者可见 → 其他 Agent 不知道现场有谁，会议投票更分散，鸭子不容易第一轮被投出，游戏自然演进多回合（实测一局从约 45s 拉长到 3 分钟以上）。
+- **严格多数才淘汰**：会议投票需要得票超过存活数一半才公投淘汰，少数人怀疑不会导致过早淘汰。
+- **更慢的鹅胜利**：任务阈值 `存活鹅数 × 20`（而不是 ×15），鹅做满任务赢得更慢。
+- **更谨慎的鸭子**：击杀冷却 25s，鸭子不能连杀、节奏更克制。
+- **更长超时**：单局上限 30 分钟（安全阀，不会因超时过早截断正常局）。
+
+> 提示：游戏时长本质由涌现决定——鸭子隐藏得好、鹅推理慢，局就更长；鸭子快速暴露则局短。想要稳定长局，调大 `GOOSE_INTERVAL` + 多跑几局挑长的即可。
 
 ## 观测 API
 
@@ -144,6 +177,8 @@ Vite dev server 会把 `/api` 代理到后端 `:19090`。
 - **WorldView** —— 2D 船舱地图：6 个房间空间 + 走廊连通 + 任务点 + 尸体对象 + Agent 真实坐标渲染
 - **CharacterSprite** —— 2D 卡通角色：行走摆腿动画、朝向旋转、死亡变灰
 - **MeetingOverlay** —— 会议大厅场景：圆桌座位 + 发言气泡 + 发言记录 + 投票（第二个核心场景）
+
+  ![紧急会议 + 发言气泡](screenshots/04-meeting-with-speeches.png)
 - **AgentPanel** —— Agent Inspector：点击角色显示 Belief / Relationship / Goal / Last Decision / Memory（Debug 模式）
 - **Timeline** —— SSE 实时事件流（移动/任务/击杀/发言/投票/会议/结束）
 

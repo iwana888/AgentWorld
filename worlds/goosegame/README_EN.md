@@ -6,6 +6,8 @@ AgentWorld's first **game world** (showcase demo), demonstrating a full world bu
 
 8 agents are dealt hidden identities (6 goose / 1 duck / 1 neutral). They move freely around a 6-room **2D spaceship**, do tasks, kill, find bodies, call emergency meetings, discuss, and vote each other out — the game runs fully autonomously. Watch this micro-society live in the browser through the **AI Observatory** (M5 / M5.1).
 
+![2D Duck-Duck-Goose Observatory overview](screenshots/01-map-game-over.png)
+
 ## Rules
 
 - **8 agents**, randomly assigned hidden identities: **6 goose / 1 duck / 1 neutral (Dodo)**.
@@ -16,7 +18,7 @@ AgentWorld's first **game world** (showcase demo), demonstrating a full world bu
   2. All duck dead → **Goose wins**
   3. Task quota reached → **Goose wins**
   4. Dodo voted out → **Dodo wins**
-- Timeout fallback: a match auto-settles after 10 minutes (`EndedBy` distinguishes `win` / `timeout`).
+- Timeout fallback: a match auto-settles after 30 minutes (`EndedBy` distinguishes `win` / `timeout`), leaving plenty of time for recording / observing emergence.
 
 ## Why it behaves like a society, not a script
 
@@ -25,6 +27,7 @@ Core design principles (M0.1 → M0.4):
 | Concept | Implementation | Notes |
 |---|---|---|
 | **Information isolation** | `Perceive` gives each agent only its own projected view | Agents never touch the real `GameState`; they can't see the full map or know who the duck is |
+| **Clues aren't globally visible** | Body-scene witnesses are visible **only to the finder** | Other agents just know "someone died", not who was at the scene → suspicion never locks unanimously on the killer, votes spread out, and games last longer |
 | **Belief (private)** | `Belief{Suspicions map[int64]float64}` | Subjective suspicion, updated only by that agent's own perception; never exposed to other agents or the observer |
 | **Relationship (bias)** | `Relationships map[int64]float64` (-1 ~ +1) | Relationship is a **decision bias**, never mutates Belief; accusing someone costs -0.15 goodwill |
 | **Role ≠ behavior** | Planner is given `Goal`, not hardcoded behavior | No "because role is X, do Y"; decisions derive from Belief + Goal |
@@ -48,6 +51,14 @@ The early observatory was a "circle + name" node graph. M5.1 upgrades it into a 
 | ⑦ | **Speech bubbles** | Agent statements appear as bubbles during the meeting |
 | ⑧ | **Voting** | Voting flow inside the meeting hall |
 | ⑨ | **Inspector retained** | Click a character → see its inner world (Belief / Relationship / Goal / Last Decision / Memory) |
+
+Action phase — agents move freely around the 6 room spaces:
+
+![Action phase, round 4](screenshots/02-map-action-round4.png)
+
+As soon as a body is found, the scene switches to the emergency meeting (the second core scene, with a round-table):
+
+![Emergency meeting scene](screenshots/03-meeting-empty.png)
 
 ### Game UI and agent internal state are layered
 
@@ -110,7 +121,7 @@ Env vars:
 | Var | Default | Notes |
 |---|---|---|
 | `GOOSE_DB` | `goosegame.db` | Game DB path (independent from the Weibo world) |
-| `GOOSE_INTERVAL` | `5s` | Wake interval (game pacing) |
+| `GOOSE_INTERVAL` | `5s` | Wake interval (game pacing). **Larger = slower, longer-lived matches** (8~15s recommended for recording) |
 | `GOOSE_OBS_ADDR` | `:19090` | Observatory listen address |
 | `LLM_API_KEY` | — | If set, agents decide via LLM; otherwise all use rule mocks (zero cost) |
 | `LLM_BASE_URL` / `LLM_MODEL` | DeepSeek | LLM endpoint / model (Ollama works too) |
@@ -126,6 +137,28 @@ npm run dev        # http://localhost:5199
 ```
 
 The Vite dev server proxies `/api` to the backend `:19090`.
+
+### Recording / making a match last longer
+
+To open the browser on "a Duck-Duck-Goose game in progress" or to record a video, **slow the pacing down**:
+
+```bash
+# Windows (PowerShell)
+$env:GOOSE_INTERVAL="12s"; go run ./worlds/goosegame/cmd/goose
+
+# macOS / Linux
+GOOSE_INTERVAL=12s go run ./worlds/goosegame/cmd/goose
+```
+
+Mechanics that make matches last longer (no extra config, on by default):
+
+- **Clues aren't globally visible**: body-scene witnesses are visible only to the finder → other agents don't know who was at the scene, votes spread, the duck is far less likely to be ejected in round one, and games evolve over many rounds (measured: a match grows from ~45s to 3+ minutes).
+- **Strict majority to eject**: a meeting vote only ejects someone above half the alive count — a minority suspicion won't end a match early.
+- **Slower goose victory**: task quota is `alive goose × 20` (not ×15), so the goose needs more tasks to win.
+- **Cautious duck**: 25s kill cooldown, the duck can't chain-kill and plays more restrainedly.
+- **Longer timeout**: a match caps at 30 minutes (a safety valve that won't truncate a healthy game).
+
+> Tip: match length is ultimately emergent — a well-hidden duck and slower goose reasoning mean long matches; a duck that's caught fast means a short one. For stable long matches, raise `GOOSE_INTERVAL` and just run a few games to catch a long one.
 
 ## Observatory API
 
@@ -144,6 +177,8 @@ The Vite dev server proxies `/api` to the backend `:19090`.
 - **WorldView** — 2D cabin map: 6 room spaces + corridors + task points + body objects + real-coordinate agent rendering
 - **CharacterSprite** — 2D cartoon character: walking-leg animation, facing rotation, grayscale on death
 - **MeetingOverlay** — meeting-hall scene: round-table seats + speech bubbles + transcript + voting (the second core scene)
+
+  ![Emergency meeting with speech bubbles](screenshots/04-meeting-with-speeches.png)
 - **AgentPanel** — Agent Inspector: click a character to see Belief / Relationship / Goal / Last Decision / Memory (Debug mode)
 - **Timeline** — SSE realtime event stream (move / task / kill / speak / vote / meeting / end)
 
