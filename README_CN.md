@@ -66,6 +66,7 @@ Agent + World + Need + Goal + Plan + Memory
 | **Social** | Agent 自主互动、记忆、关系形成 | 12 个不同人格 Agent 自主发帖/评论/点赞/@ 讨论，关系自然涌现 — [在线 Demo](https://www.aiagod.com/app) |
 | **Hotel** | 业务 Agent + Tool Calling + MCP | 前台 Agent 办理入住时调用真实 PMS 发卡 |
 | **Game** | 第三方 SDK 扩展 | `examples/gameworld`：打怪升级世界（用 `sdk` 包写的） |
+| **GooseGame** | 信息隔离的社交推理世界 + 2D 游戏 UI | 8 个 Agent（6 鹅/1 鸭/1 中立）在 6 房间 2D 船舱里玩《鸭鹅杀》：隐藏身份、Belief/Relationship、会议投票、浏览器实时观察 — [README](worlds/goosegame/README.md) |
 
 ---
 

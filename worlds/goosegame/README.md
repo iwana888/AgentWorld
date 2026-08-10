@@ -2,7 +2,9 @@
 
 AgentWorld 的第一个**游戏世界**（showcase demo），演示在 `agentworld/sdk` 之上构建一个带信息隔离、隐藏身份、社交推理与涌现行为的完整世界。
 
-8 个 Agent 分到隐藏身份（6 鹅 / 1 鸭 / 1 中立），在 3 个房间里移动、做任务、击杀、发现尸体、开会讨论、投票淘汰——游戏自动进行，并可通过 **AI 社会观察台**（M5 Observatory）在浏览器里实时观察这个微型社会。
+[English](README_EN.md) · [中文](README.md)
+
+8 个 Agent 分到隐藏身份（6 鹅 / 1 鸭 / 1 中立），在 6 个房间（一个 2D 船舱）里自由移动、做任务、击杀、发现尸体、开会讨论、投票淘汰——游戏自动进行。通过 **AI 社会观察台**（M5 / M5.1）在浏览器里实时观看这场微型社会。
 
 ## 玩法规则
 
@@ -31,13 +33,49 @@ AgentWorld 的第一个**游戏世界**（showcase demo），演示在 `agentwor
 
 > 涌现来源：Agent 可能判断错误、可能偏见、可能撒谎、可能结盟报复。规则只保证合法性与信息隔离，不决定"它该怎么做"。
 
+## M5.1：从"World Graph"升级为"2D Game World"
+
+早期观察台是"圆圈 + 名字"的节点图（World Graph）。M5.1 把它升级为一个真正的 2D 游戏世界，**打开浏览器第一眼看到的是一场正在发生的鸭鹅杀**：
+
+| # | 升级 | 说明 |
+|---|---|---|
+| ① | **房间 = 空间** | 6 个房间（Cafeteria / Engine / Storage / Laboratory / Security / Corridor）从"节点"变为"2D 舱体矩形"，Agent 在空间内分布，不再是节点图 |
+| ② | **Agent 自由移动** | `GameAgent` 拥有真实 `X/Y` 坐标 + `Facing` 朝向；SSE `agent.moved` 推送真实 `from/to` 坐标，前端平滑过渡，不再"瞬移到房间中心" |
+| ③ | **角色 Sprite / 动画** | 统一 2D 卡通角色（`CharacterSprite.vue`），带行走摆腿动画、死亡变灰、朝向旋转 |
+| ④ | **尸体对象** | 尸体作为房间内的对象（躺倒 💀），不再是"房间角落的标签" |
+| ⑤ | **任务点** | 房间内渲染 🔧 任务点 |
+| ⑥ | **发现尸体 → Meeting** | 会议成为**第二个核心场景**：全屏会议大厅（圆桌座位 + 发言气泡 + 发言记录 + 投票） |
+| ⑦ | **发言气泡** | 会议中 Agent 发言以气泡形式逐条呈现 |
+| ⑧ | **投票** | 会议大厅内的投票流程 |
+| ⑨ | **Inspector 保留** | 点击角色 → 查看它的内心世界（Belief / Relationship / Goal / Last Decision / Memory） |
+
+### 游戏 UI 与 Agent 内部状态分层
+
+```
+              AgentWorld
+                  │
+        ┌─────────┴─────────┐
+        │                   │
+    Game State          Agent State
+        │                   │
+        ▼                   ▼
+    游戏世界              思维世界
+        │                   │
+        ▼                   ▼
+    游戏 UI             Inspector
+```
+
+**身份隐藏**：普通观战模式，观众看到的是"角色 + 名字"（统一中性角色，不暴露谁是鸭）；只有点开 Agent 的 **Inspector / Debug 模式**才显示真实身份与内心状态。
+
+> 普通用户看故事，开发者看 Agent 的思维——这是 AgentWorld 的核心差异。
+
 ## 架构
 
 ```
 AgentWorld Runtime (sdk.Module 契约)
         │  Perceive(信息隔离投影)
         ▼
-   GooseModule ──► goose.GameState（真实世界，带锁）
+   GooseModule ──► goose.GameState（真实世界，带锁，含 2D 坐标）
         │                │ 发布事件
         │                ▼
         │        goose.Observatory（事件总线 + In-memory Store）
@@ -49,8 +87,8 @@ AgentWorld Runtime (sdk.Module 契约)
               web/（Vue3 + Vite :5199，AI 社会观察台）
 ```
 
-- `goose/game.go` —— 游戏状态机（身份/房间/任务/尸体/会议/胜负）
-- `goose/actions.go` —— 6 种动作 + 事件发布
+- `goose/game.go` —— 游戏状态机（身份/房间=空间/2D坐标/任务/尸体/会议/胜负）
+- `goose/actions.go` —— 6 种动作 + 事件发布（`agent.moved` 携带真实坐标）
 - `goose/perception.go` —— 信息隔离投影（Agent 视角）
 - `goose/observatory.go` —— 事件总线 + 内存事件存储（最近 1000 条）
 - `module.go` —— `sdk.Module` 实现（Planner / Executor / WakePolicy）
@@ -89,21 +127,24 @@ npm run dev        # http://localhost:5199
 
 Vite dev server 会把 `/api` 代理到后端 `:19090`。
 
-## 观测 API（M5 v0.1）
+## 观测 API
 
 | 接口 | 说明 |
 |---|---|
-| `GET /api/game` | 当前状态（阶段/回合/存活 Agent 位置/尸体） |
-| `GET /api/agents` | Agent 公开信息（名字/位置/存活/身份） |
+| `GET /api/game` | 当前状态（阶段/回合/存活 Agent 位置（2D 坐标）/尸体） |
+| `GET /api/agents` | Agent 公开信息（名字/位置/存活/身份/2D 坐标） |
+| `GET /api/agents/{id}` | 单个 Agent 的深度私有状态（Agent Inspector：Belief/Relationship/Goal/LastDecision/Memory） |
 | `GET /api/events` | 最近事件（In-memory，最多 200 条） |
 | `GET /api/events/stream` | SSE 实时事件流 |
 
-> **信息隔离同样保护观战 API**：`Belief` / `Relationship` 是 Agent 私有主观状态，不通过普通 API 暴露。前端只看到公开快照。
+> **信息隔离同样保护观战 API**：`Belief` / `Relationship` 是 Agent 私有主观状态，不通过公开的 `/api/game`、`/api/agents` 暴露。只有点击某 Agent 按需请求 `/api/agents/{id}`（Agent Inspector）才返回该 Agent 自己的主观状态，面向调试。
 
 ## 前端组成
 
-- **WorldView** —— SVG 地图：3 个房间 + Agent 位置 + 尸体标记，网格排布避免遮挡
-- **AgentPanel** —— 选中 Agent 的公开信息（M5 v0.1 暂不开放主观 Belief）
+- **WorldView** —— 2D 船舱地图：6 个房间空间 + 走廊连通 + 任务点 + 尸体对象 + Agent 真实坐标渲染
+- **CharacterSprite** —— 2D 卡通角色：行走摆腿动画、朝向旋转、死亡变灰
+- **MeetingOverlay** —— 会议大厅场景：圆桌座位 + 发言气泡 + 发言记录 + 投票（第二个核心场景）
+- **AgentPanel** —— Agent Inspector：点击角色显示 Belief / Relationship / Goal / Last Decision / Memory（Debug 模式）
 - **Timeline** —— SSE 实时事件流（移动/任务/击杀/发言/投票/会议/结束）
 
 ## 目录
@@ -115,9 +156,12 @@ worlds/goosegame/
 ├── module.go            # sdk.Module 实现
 ├── server.go            # 观测 HTTP + SSE 服务
 └── web/                 # AI 社会观察台前端（Vue3 + Vite + TS + ElementPlus）
+    └── src/components/  # WorldView / CharacterSprite / MeetingOverlay / AgentPanel / Timeline
 ```
 
 ## 相关文档
 
+- [README_EN.md](README_EN.md) —— 英文版
 - [README.md](../../README.md) —— AgentWorld 主文档（Demo Worlds 里有本世界条目）
+- [README_CN.md](../../README_CN.md) —— AgentWorld 主文档（中文）
 - [sdk/README.md](../../sdk/README.md) —— 用 SDK 构建自己的世界

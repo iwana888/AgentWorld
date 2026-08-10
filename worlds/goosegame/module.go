@@ -98,11 +98,32 @@ func (p *goosePlanner) Decide(ctx context.Context, a sdk.Agent, perc sdk.Percept
 	// LLM 决策（复用 llm.Client，与主程序一致：有 key 用 LLM）
 	if a.UseLLM && p.mod.llm != nil && p.mod.llm.Enabled() {
 		if d, err := p.llmDecide(ctx, a, view); err == nil {
+			p.mod.game.SetLastDecision(view.AgentID, describeDecision(d))
 			return d, nil
 		}
 	}
 	// 规则决策（Belief 驱动）
-	return p.decideByBelief(view), nil
+	d := p.decideByBelief(view)
+	p.mod.game.SetLastDecision(view.AgentID, describeDecision(d))
+	return d, nil
+}
+
+// describeDecision 把决策翻译成人类可读的一句话（Agent Inspector 展示）。
+func describeDecision(d *sdk.Decision) string {
+	if d == nil {
+		return "无决策"
+	}
+	base := map[string]string{
+		"move": "移动", "task": "做任务", "kill": "击杀", "report": "报告尸体",
+		"speak": "发言", "vote": "投票", "wait": "观望", "idle": "观望",
+	}[d.Action]
+	if base == "" {
+		base = d.Action
+	}
+	if d.Reason != "" {
+		return base + "（" + d.Reason + "）"
+	}
+	return base
 }
 
 // updateBelief 基于本次感知更新 Agent 的私有 Belief（对每个人的怀疑）。
@@ -234,7 +255,7 @@ func (p *goosePlanner) llmDecide(ctx context.Context, a sdk.Agent, view *goose.P
 		"每次只做一件事。输出严格 JSON（不要多余文字）：{\"action\":\"move|task|kill|report|speak|vote|wait\",\"target\":数字或0,\"content\":\"发言或理由\",\"reason\":\"你的理由\"}。" +
 		"其中 speak 的 target 是你要指控的 Agent 编号（无指控则 target 为 0），content 是你的发言；" +
 		"vote 的 target 是你投票的 Agent 编号（弃票则 target 为 -1）；" +
-		"move 的 target 是房间编号(0=Lobby,1=Kitchen,2=Engine)；kill 只在你是鸭子时可能成功。"
+		"move 的 target 是房间编号(0=Cafeteria,1=Engine,2=Storage,3=Laboratory,4=Security,5=Corridor)；kill 只在你是鸭子时可能成功。"
 
 	user := p.buildLLMContext(view)
 	dec, err := p.mod.llm.Decide(ctx, system, user)

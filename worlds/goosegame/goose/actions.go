@@ -2,6 +2,7 @@ package goose
 
 import (
 	"fmt"
+	"math"
 	"math/rand"
 	"strings"
 	"time"
@@ -60,6 +61,10 @@ func (g *GameState) ApplyAction(actorID int64, action string, target int64, cont
 		}
 		return ActionSpec{OK: false, Message: "未知动作: " + action}
 	}()
+	// 记录最近一次动作（Agent Inspector 展示用）。
+	if res.OK {
+		me.LastAction = res.Message
+	}
 
 	// 每次行动后：尸体可能被路人发现（避免永远无人报告而卡死）。
 	g.maybeDiscoverBody()
@@ -132,7 +137,9 @@ func roomIndex(r Room) int64 {
 	return 0
 }
 
-// doMove 移动到目标房间（target = 房间索引 0/1/2）。
+// doMove 移动到目标房间（target = 房间索引）。
+// M5.1：Agent 在 2D 空间内真实移动——更新坐标与朝向，SSE 推送真实 from/to 坐标，
+// 前端据此做平滑插值动画（Agent 不再"瞬移到房间中心"，而是走过去）。
 func (g *GameState) doMove(me *GameAgent, target int64) ActionSpec {
 	if g.Phase != PhaseAction {
 		return ActionSpec{OK: false, Message: "会议阶段不能移动"}
@@ -141,13 +148,35 @@ func (g *GameState) doMove(me *GameAgent, target int64) ActionSpec {
 	if r == me.Room {
 		return ActionSpec{OK: false, Message: "你已经在 " + string(r)}
 	}
-	from := me.Room
+	fromX, fromY := me.X, me.Y
+	fromRoom := me.Room
+	// 目标房间内的落点：优先靠近通往本房间的入口，让移动更有"走过去"的感觉。
+	tx, ty := targetPoint(r)
+	// 朝向目标方向
+	me.Facing = math.Atan2(ty-me.Y, tx-me.X)
 	me.Room = r
+	me.X, me.Y = tx, ty
 	g.log("事件: %s 移动到了 %s", me.Name, r)
 	g.publish("agent.moved", map[string]interface{}{
-		"agent": me.ID, "name": me.Name, "from": from, "to": r,
+		"agent":    me.ID,
+		"name":     me.Name,
+		"fromRoom": fromRoom,
+		"from":     map[string]float64{"x": fromX, "y": fromY},
+		"toRoom":   string(r),
+		"to":       map[string]float64{"x": tx, "y": ty},
+		"facing":   me.Facing,
 	})
 	return ActionSpec{OK: true, Message: "你移动到了 " + string(r)}
+}
+
+// targetPoint 返回进入某房间时 Agent 的落点坐标。
+// 尽量靠近入口（Door），若入口在房间内则取入口附近；否则取房间内随机点。
+func targetPoint(r Room) (float64, float64) {
+	if _, ok := RoomLayout[r]; !ok {
+		return roomCenter(r)
+	}
+	// 落点直接在房间空间内随机取点，体现"走进来后散开"。
+	return randomPointIn(r)
 }
 
 // doTask 在当前位置完成任务（鹅加分，鸭做任务会扣分但被允许——鸭需伪装）。

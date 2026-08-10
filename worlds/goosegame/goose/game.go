@@ -10,6 +10,7 @@ package goose
 
 import (
 	"fmt"
+	"math"
 	"math/rand"
 	"sync"
 	"time"
@@ -57,16 +58,56 @@ func (p Phase) String() string {
 	return "unknown"
 }
 
-// 房间（3 个区域，readme v0.2 §4）。
+// 房间（M5 v0.1：6 个区域，readme v0.2 §4）。
 type Room string
 
 const (
-	RoomLobby   Room = "Lobby"
-	RoomKitchen Room = "Kitchen"
-	RoomEngine  Room = "Engine"
+	RoomCafeteria   Room = "Cafeteria"
+	RoomEngine      Room = "Engine"
+	RoomStorage     Room = "Storage"
+	RoomLaboratory  Room = "Laboratory"
+	RoomSecurity    Room = "Security"
+	RoomCorridor    Room = "Corridor"
 )
 
-var allRooms = []Room{RoomLobby, RoomKitchen, RoomEngine}
+var allRooms = []Room{RoomCafeteria, RoomEngine, RoomStorage, RoomLaboratory, RoomSecurity, RoomCorridor}
+
+// RoomRect 一个房间在 2D 地图上的矩形空间（M5.1：房间是"空间"，不是节点）。
+// MinX/MinY/MaxX/MaxY 定义房间可站立范围；Agent 拥有真实坐标，在这个范围内移动。
+type RoomRect struct {
+	MinX, MinY, MaxX, MaxY float64
+	// Door 通往相邻房间的出口（Agent 从一个房间走向另一个时经过）。
+	DoorX, DoorY float64
+}
+
+// RoomLayout 全地图布局：画布 720x640，垂直中轴（Cafeteria 中心），房间为空间。
+var RoomLayout = map[Room]RoomRect{
+	RoomCafeteria:  {MinX: 260, MinY: 200, MaxX: 460, MaxY: 330, DoorX: 360, DoorY: 330},
+	RoomEngine:     {MinX: 260, MinY: 490, MaxX: 460, MaxY: 610, DoorX: 360, DoorY: 490},
+	RoomStorage:    {MinX: 290, MinY: 40, MaxX: 410, MaxY: 170, DoorX: 360, DoorY: 170},
+	RoomLaboratory: {MinX: 470, MinY: 200, MaxX: 660, MaxY: 330, DoorX: 470, DoorY: 265},
+	RoomSecurity:   {MinX: 60, MinY: 200, MaxX: 250, MaxY: 330, DoorX: 250, DoorY: 265},
+	RoomCorridor:   {MinX: 260, MinY: 350, MaxX: 460, MaxY: 470, DoorX: 360, DoorY: 350},
+}
+
+// roomCenter 返回房间中心坐标（Agent 出生/初始位置）。
+func roomCenter(r Room) (float64, float64) {
+	if rect, ok := RoomLayout[r]; ok {
+		return (rect.MinX + rect.MaxX) / 2, (rect.MinY + rect.MaxY) / 2
+	}
+	return 360, 265 // fallback Cafeteria
+}
+
+// randomPointIn 返回房间内一个随机坐标（偏离中心，避免所有 Agent 叠在中心）。
+func randomPointIn(r Room) (float64, float64) {
+	rect := RoomLayout[r]
+	w := rect.MaxX - rect.MinX
+	h := rect.MaxY - rect.MinY
+	// 留出边缘 padding，坐标均匀散落在房间空间内
+	x := rect.MinX + 20 + rand.Float64()*(w-40)
+	y := rect.MinY + 20 + rand.Float64()*(h-40)
+	return x, y
+}
 
 // Belief 一个 Agent 的主观信念（对每个其他 Agent 的可疑度）。
 // 这是 Agent 的私有状态：只能由该 Agent 自己的感知更新，其他 Agent 和
@@ -199,6 +240,11 @@ type GameAgent struct {
 	KillCooldown time.Time          // 鸭子击杀冷却（避免连续杀）
 	Belief       Belief             // 本 Agent 的私有信念（可疑度，基于观察事实）
 	Relationships map[int64]float64 // 本 Agent 对其他 Agent 的好感度（-1 敌意 ~ +1 信任）
+	LastDecision string             // 最近一次决策的说明（Agent Inspector 展示）
+	LastAction   string             // 最近一次执行的动作文本
+	// M5.1 2D 空间：Agent 拥有真实坐标与朝向，在房间"空间"内自由移动。
+	X, Y  float64 // 当前位置（地图坐标）
+	Facing float64 // 朝向角度（弧度，0=右，π/2=下，用于前端角色朝向动画）
 }
 
 // Task 一个房间里的任务点。
@@ -290,14 +336,18 @@ func NewGame(agentIDs []int64, names []string, obs *Observatory) *GameState {
 		if i < len(names) && names[i] != "" {
 			name = names[i]
 		}
-		// 出生在随机房间
+		// 出生在随机房间，拥有房间内的真实坐标（M5.1 2D 空间）
 		room := allRooms[rand.Intn(len(allRooms))]
+		x, y := randomPointIn(room)
 		g.Agents[id] = &GameAgent{
 			ID:    id,
 			Name:  name,
 			Team:  teams[i],
 			Alive: true,
 			Room:  room,
+			X:     x,
+			Y:     y,
+			Facing: rand.Float64() * 2 * math.Pi,
 		}
 	}
 	// 每个房间撒一些任务点（鹅完成它们）
@@ -312,6 +362,15 @@ func NewGame(agentIDs []int64, names []string, obs *Observatory) *GameState {
 
 // Agent 返回某 Agent 的游戏状态；不存在或未参与返回 nil。
 func (g *GameState) Agent(id int64) *GameAgent { return g.Agents[id] }
+
+// SetLastDecision 记录某 Agent 最近一次决策（线程安全，Agent Inspector 展示用）。
+func (g *GameState) SetLastDecision(id int64, text string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if a := g.Agents[id]; a != nil {
+		a.LastDecision = text
+	}
+}
 
 // AliveCount 存活 Agent 数。
 func (g *GameState) AliveCount() int {
@@ -392,6 +451,10 @@ type AgentPublic struct {
 	Alive   bool   `json:"alive"`
 	Room    string `json:"room"`
 	TaskDone int   `json:"taskDone"`
+	// M5.1 2D 空间坐标（前端据此渲染 Agent 在地图上的真实位置）
+	X      float64 `json:"x"`
+	Y      float64 `json:"y"`
+	Facing float64 `json:"facing"`
 }
 
 // Snapshot 返回当前游戏状态的公开快照（带锁）。
@@ -411,12 +474,87 @@ func (g *GameState) Snapshot() GameSnapshot {
 		snap.Agents = append(snap.Agents, AgentPublic{
 			ID: a.ID, Name: a.Name, Team: a.Team.String(),
 			Alive: a.Alive, Room: string(a.Room), TaskDone: a.TaskDone,
+			X: a.X, Y: a.Y, Facing: a.Facing,
 		})
 	}
 	for _, b := range g.Bodies {
 		snap.Bodies = append(snap.Bodies, BodyBrief{AgentID: b.AgentID, Room: b.Room})
 	}
 	return snap
+}
+
+// AgentInspector 单个 Agent 的私有状态（Agent Inspector 用，面向调试）。
+// 设计：这是"点开某个 Agent"才按需取回的深度视图。它只含该 Agent 自己的
+// 主观状态（Belief/Relationship/Goal/LastDecision）+ 它视角的事件记忆。
+// 游戏 UI 默认不展示它；普通观众只看到地图上的行为。
+type AgentInspector struct {
+	ID           int64              `json:"id"`
+	Name         string             `json:"name"`
+	Team         string             `json:"team"`
+	Alive        bool               `json:"alive"`
+	Room         string             `json:"room"`
+	Goal         string             `json:"goal"`      // 由身份派生的目标
+	LastDecision string             `json:"lastDecision"`
+	LastAction   string             `json:"lastAction"`
+	Belief       []SuspectJSON      `json:"belief"`       // 该 Agent 对每人的怀疑
+	Relationship []RelJSON          `json:"relationship"` // 该 Agent 与每人的好感
+	Memory       []string           `json:"memory"`       // 该 Agent 视角的最近事件
+}
+
+// SuspectJSON 一条主观怀疑（JSON 化）。
+type SuspectJSON struct {
+	AgentID   int64   `json:"agentID"`
+	Name      string  `json:"name"`
+	Suspicion float64 `json:"suspicion"`
+}
+
+// RelJSON 一条关系好感（JSON 化）。
+type RelJSON struct {
+	AgentID  int64   `json:"agentID"`
+	Name     string  `json:"name"`
+	Goodwill float64 `json:"goodwill"`
+}
+
+// Inspector 返回某个 Agent 的深度私有状态（带锁，/api/agents/{id} 用）。
+// 只返回该 Agent 自己的主观状态与事件记忆，不暴露其他 Agent 的 Belief。
+func (g *GameState) Inspector(id int64) *AgentInspector {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	me := g.Agents[id]
+	if me == nil {
+		return nil
+	}
+	ins := &AgentInspector{
+		ID:           me.ID,
+		Name:         me.Name,
+		Team:         me.Team.String(),
+		Alive:        me.Alive,
+		Room:         string(me.Room),
+		LastDecision: me.LastDecision,
+		LastAction:   me.LastAction,
+	}
+	switch me.Team {
+	case TeamDuck:
+		ins.Goal = "隐藏身份，消灭鹅群，避免被投出去"
+	case TeamDodo:
+		ins.Goal = "让自己被投票淘汰（特殊目标）"
+	default:
+		ins.Goal = "找出并淘汰鸭子，完成任务保护大家"
+	}
+	for tid, s := range me.Belief.Suspicions {
+		if tid == me.ID {
+			continue
+		}
+		ins.Belief = append(ins.Belief, SuspectJSON{AgentID: tid, Name: g.nameOf(tid), Suspicion: s})
+	}
+	for tid, r := range me.Relationships {
+		if tid == me.ID {
+			continue
+		}
+		ins.Relationship = append(ins.Relationship, RelJSON{AgentID: tid, Name: g.nameOf(tid), Goodwill: r})
+	}
+	ins.Memory = g.RecentEvents(8)
+	return ins
 }
 
 // PublicAgents 返回所有 Agent 的公开信息（带锁，观测 API /api/agents 用）。
@@ -428,6 +566,7 @@ func (g *GameState) PublicAgents() []AgentPublic {
 		out = append(out, AgentPublic{
 			ID: a.ID, Name: a.Name, Team: a.Team.String(),
 			Alive: a.Alive, Room: string(a.Room), TaskDone: a.TaskDone,
+			X: a.X, Y: a.Y, Facing: a.Facing,
 		})
 	}
 	return out

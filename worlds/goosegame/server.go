@@ -7,11 +7,13 @@
 // API（M5 v0.1 极简）：
 //	GET /api/game              → 当前游戏状态（阶段/回合/存活 Agent 位置/尸体）
 //	GET /api/agents            → Agent 公共信息（名字/位置/存活/身份）
+//	GET /api/agents/{id}       → 单个 Agent 的深度私有状态（Agent Inspector）
 //	GET /api/events            → 最近事件（In-memory）
 //	GET /api/events/stream     → SSE 实时事件流
 //
-// 注意：Agent 的主观状态（Belief/Relationship）不通过普通 API 暴露——
-// 它们对每个 Agent 私有，避免破坏信息隔离。
+// 注意：Agent 的主观状态（Belief/Relationship）不通过公开的 /api/game、/api/agents
+// 暴露——它们对每个 Agent 私有。只有点击某 Agent 时按需请求 /api/agents/{id}
+// （Agent Inspector）才返回该 Agent 自己的主观状态，面向调试。
 package goosegame
 
 import (
@@ -19,6 +21,8 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -33,6 +37,7 @@ func NewServer(mod *GooseModule) *Server {
 	s := &Server{mod: mod, mux: http.NewServeMux()}
 	s.mux.HandleFunc("/api/game", s.handleGame)
 	s.mux.HandleFunc("/api/agents", s.handleAgents)
+	s.mux.HandleFunc("/api/agents/", s.handleAgentInspector)
 	s.mux.HandleFunc("/api/events", s.handleEvents)
 	s.mux.HandleFunc("/api/events/stream", s.handleStream)
 	return s
@@ -57,6 +62,24 @@ func (s *Server) handleGame(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleAgents(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, s.mod.Game().PublicAgents())
+}
+
+// handleAgentInspector 返回单个 Agent 的深度私有状态（Agent Inspector，面向调试）。
+// 路由：/api/agents/{id}
+func (s *Server) handleAgentInspector(w http.ResponseWriter, r *http.Request) {
+	// 去掉 "/api/agents/" 前缀
+	idStr := strings.TrimPrefix(r.URL.Path, "/api/agents/")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		http.Error(w, "bad agent id", http.StatusBadRequest)
+		return
+	}
+	ins := s.mod.Game().Inspector(id)
+	if ins == nil {
+		http.Error(w, "agent not found", http.StatusNotFound)
+		return
+	}
+	writeJSON(w, ins)
 }
 
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
