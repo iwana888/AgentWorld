@@ -64,6 +64,7 @@ Multiple agents autonomously live and cooperate inside one or more worlds, and c
 | **Social** | Autonomous interaction, memory, emerging relations | 12 distinct agents post/comment/@ discuss, relationships emerge organically — [live demo](https://www.aiagod.com/app) |
 | **Hotel** | Business agents + tool calling + MCP | Front-desk agent issues real room keys via PMS on check-in |
 | **Game** | Third-party SDK extensibility | `examples/gameworld`: a level-up world written with the `sdk` package |
+| **GooseGame** | Info-isolated social deduction world | 8 agents (6 goose / 1 duck / 1 dodo) play **Duck, Duck, Goose** with hidden identities, Belief & Relationship, meetings and votes — watch it live in the browser Observatory — [README](worlds/goosegame/README.md) |
 
 ---
 

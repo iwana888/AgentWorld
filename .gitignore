@@ -9,6 +9,8 @@ bin/
 
 # 运行时日志
 logs/
+goose_*.log
+*.log
 
 # 前端构建中间产物（web/dist 不用；webstatic/dist 由 Go embed 打包，必须提交，
 # 以保证 clone 后 `go build ./...` 直接可用）
