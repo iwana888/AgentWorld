@@ -54,6 +54,14 @@
         </g>
       </g>
 
+      <!-- 发言气泡（M6：Agent 表达/思考时冒泡，体现自主决策） -->
+      <g v-if="speechBubble" :transform="`translate(${speechBubble.x} ${speechBubble.y})`" class="speech-bubble">
+        <rect :x="-110" :y="-26" width="220" height="44" rx="10" class="bubble-bg" />
+        <path :d="`M -8 16 L 0 28 L 8 16 Z`" class="bubble-tail" />
+        <text y="1" text-anchor="middle" class="bubble-name">{{ speechBubble.name }}</text>
+        <text y="15" text-anchor="middle" class="bubble-text">{{ speechBubble.text }}</text>
+      </g>
+
       <!-- 阶段徽标 -->
       <text :x="MAP_W / 2" y="30" text-anchor="middle" class="phase-badge" :class="phaseClass">
         {{ phaseLabel }}
@@ -69,7 +77,11 @@ import { MAP_W, MAP_H, ROOM_LAYOUT, ROOM_CONNECTIONS, ROOM_THEME, roomCenter, te
 import type { AgentRender } from '../composables/useGame'
 import type { GameSnapshot } from '../types'
 
-const props = defineProps<{ snapshot: GameSnapshot; agents: AgentRender[] }>()
+const props = defineProps<{
+  snapshot: GameSnapshot
+  agents: AgentRender[]
+  speechBubble: { agent: number; name: string; text: string; x: number; y: number } | null
+}>()
 const emit = defineEmits<{ (e: 'select', id: number): void }>()
 
 const roomList = computed(() =>
@@ -138,6 +150,16 @@ function colorOf(id: number) {
 
 .shadow { fill: rgba(0,0,0,.35); }
 .body-emoji { font-size: 22px; }
+
+.speech-bubble { animation: bubblePop .25s ease-out; pointer-events: none; }
+.bubble-bg { fill: rgba(15, 22, 38, 0.92); stroke: #3d5278; stroke-width: 1.2; }
+.bubble-tail { fill: rgba(15, 22, 38, 0.92); }
+.bubble-name { fill: #9ee6b0; font-size: 9px; font-weight: 700; }
+.bubble-text { fill: #e2e9ff; font-size: 11px; }
+@keyframes bubblePop {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
 
 .phase-badge { font-size: 15px; font-weight: 800; fill: #9fb3e8; letter-spacing: 1px; }
 .phase-badge.meeting { fill: #ffd166; }

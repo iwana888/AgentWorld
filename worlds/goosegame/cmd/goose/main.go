@@ -68,6 +68,11 @@ func main() {
 
 	// 创建/复用 8 个游戏 Agent（World="goosegame"）。
 	agentIDs, names := ensureAgents(d)
+	// 每个角色的性格（与 roles 一一对应，Inspector 展示）
+	personalities := make([]string, 0, len(roles))
+	for _, r := range roles {
+		personalities = append(personalities, r.personality)
+	}
 
 	// LLM 客户端（可选）：有 LLM_API_KEY 则用 LLM 决策，否则规则 Mock。
 	llmClient := llm.New(
@@ -79,7 +84,7 @@ func main() {
 	// Runtime + 模块
 	brk := bus.NewBroker()
 	rt := agent.NewRuntime(d, llmClient, brk)
-	mod := goosegame.New(agentIDs, names, llmClient)
+	mod := goosegame.New(agentIDs, names, personalities, llmClient)
 	rt.RegisterModule("goosegame", mod)
 
 	// 有 LLM 则全用 LLM 决策，否则全部规则 Mock。

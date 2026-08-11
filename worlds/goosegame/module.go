@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"math/rand"
 	"strings"
+	"time"
 
 	"agentworld/internal/llm"
 	"agentworld/sdk"
@@ -32,10 +33,10 @@ type GooseModule struct {
 // New 创建鸭鹅杀模块。agentIDs 是参与游戏的 8 个 AgentWorld AgentID。
 // llm 可空（空则所有 Agent 走规则决策）。
 // 内部创建观察台（Observatory），收集游戏事件供 AI 社会观察台前端消费。
-func New(agentIDs []int64, names []string, llmClient *llm.Client) *GooseModule {
+func New(agentIDs []int64, names []string, personalities []string, llmClient *llm.Client) *GooseModule {
 	obs := goose.NewObservatory(goose.ObservOpts{MaxEvents: 1000})
 	return &GooseModule{
-		game: goose.NewGame(agentIDs, names, obs),
+		game: goose.NewGame(agentIDs, names, personalities, obs),
 		llm:  llmClient,
 		obs:  obs,
 	}
@@ -99,13 +100,151 @@ func (p *goosePlanner) Decide(ctx context.Context, a sdk.Agent, perc sdk.Percept
 	if a.UseLLM && p.mod.llm != nil && p.mod.llm.Enabled() {
 		if d, err := p.llmDecide(ctx, a, view); err == nil {
 			p.mod.game.SetLastDecision(view.AgentID, describeDecision(d))
+			p.recordDecision(view, d)
 			return d, nil
 		}
 	}
 	// 规则决策（Belief 驱动）
 	d := p.decideByBelief(view)
 	p.mod.game.SetLastDecision(view.AgentID, describeDecision(d))
+	p.recordDecision(view, d)
 	return d, nil
+}
+
+// recordDecision 把一次决策的完整上下文记录为 DecisionRecord（M8）。
+// 它同时更新 LastWhy 文本（供 Agent Brain 快速展示）。返回记录索引（Executor 回填用）。
+func (p *goosePlanner) recordDecision(view *goose.Perception, d *sdk.Decision) int {
+	rec := p.decisionContext(view, d)
+	idx := p.mod.game.RecordDecision(rec)
+	// 生成合并文本作为 LastWhy（保留给旧 UI / 快速查看）
+	p.mod.game.SetLastWhy(view.AgentID, renderWhy(rec))
+	return idx
+}
+
+// decisionContext 构造一次决策的结构化上下文（Goal/Perception/Memory/Relationship/Decision）。
+func (p *goosePlanner) decisionContext(view *goose.Perception, d *sdk.Decision) goose.DecisionRecord {
+	// 目标：由身份派生（与 Inspector 一致）
+	goal := "找出并淘汰鸭子，完成任务保护大家"
+	switch view.Team {
+	case goose.TeamDuck:
+		goal = "隐藏身份，消灭鹅群，避免被投出去"
+	case goose.TeamDodo:
+		goal = "让自己被投票淘汰（特殊目标）"
+	}
+	// 看到：当前房间 + 同房的人
+	saw := "我在 " + string(view.Room)
+	if len(view.Roommates) > 0 {
+		names := make([]string, 0, len(view.Roommates))
+		for _, r := range view.Roommates {
+			names = append(names, r.Name)
+		}
+		saw += "，身边有 " + joinNames(names)
+	} else {
+		saw += "，独自一人"
+	}
+	// 记忆：最近的 1-2 条事件
+	mem := ""
+	if len(view.RecentEvents) > 0 {
+		mem = view.RecentEvents[len(view.RecentEvents)-1]
+	}
+	// 关系：对"最关键对象"（最可疑者）的信任度摘要
+	rel := ""
+	if target, ok := p.mod.game.MostSuspiciousOf(view.AgentID, view.AliveList, 0); ok {
+		targetName := fmt.Sprintf("Agent%d", target)
+		if ta := p.mod.game.Agent(target); ta != nil {
+			targetName = ta.Name
+		}
+		if a := p.mod.game.Agent(view.AgentID); a != nil {
+			if gw, ok := a.Relationships[target]; ok {
+				rel = fmt.Sprintf("对 %s 信任度 %+.2f（怀疑度 %.2f）", targetName, gw, a.Belief.Suspicions[target])
+			} else {
+				rel = fmt.Sprintf("对 %s 怀疑度 %.2f", targetName, a.Belief.Suspicions[target])
+			}
+		}
+	}
+	rec := goose.DecisionRecord{
+		AgentID:      view.AgentID,
+		Timestamp:    time.Now(),
+		Goal:         goal,
+		Perception:   saw,
+		Memory:       mem,
+		Relationship: rel,
+		Decision:     describeDecision(d),
+	}
+	return rec
+}
+
+// renderWhy 把 DecisionRecord 渲染成合并文本（"为什么"多行）。
+func renderWhy(rec goose.DecisionRecord) string {
+	lines := []string{}
+	if rec.Goal != "" {
+		lines = append(lines, "目标："+rec.Goal)
+	}
+	if rec.Perception != "" {
+		lines = append(lines, "看到："+rec.Perception)
+	}
+	if rec.Memory != "" {
+		lines = append(lines, "记忆："+rec.Memory)
+	}
+	if rec.Relationship != "" {
+		lines = append(lines, "关系："+rec.Relationship)
+	}
+	lines = append(lines, "因此：我决定"+rec.Decision)
+	return strings.Join(lines, "\n")
+}
+
+// buildWhy 构造一次决策的完整依据（"为什么"），供 Agent Brain / Inspector 展示。
+// 这是把 Agent 的"自主决策"变成肉眼可见的东西：目标 → 看到 → 记忆 → 性格 → 因此。
+// 注意：这里展示的是行动理由/状态摘要，不是 LLM 的内部思维链。
+func (p *goosePlanner) buildWhy(view *goose.Perception, d *sdk.Decision) string {
+	// 目标：由身份派生（与 Inspector 一致）
+	goal := "找出并淘汰鸭子，完成任务保护大家"
+	switch view.Team {
+	case goose.TeamDuck:
+		goal = "隐藏身份，消灭鹅群，避免被投出去"
+	case goose.TeamDodo:
+		goal = "让自己被投票淘汰（特殊目标）"
+	}
+	// 看到：当前房间 + 同房的人
+	saw := "我在 " + string(view.Room)
+	if len(view.Roommates) > 0 {
+		names := make([]string, 0, len(view.Roommates))
+		for _, r := range view.Roommates {
+			names = append(names, r.Name)
+		}
+		saw += "，身边有 " + joinNames(names)
+	} else {
+		saw += "，独自一人"
+	}
+	// 记忆：最近的 1-2 条事件
+	mem := ""
+	if len(view.RecentEvents) > 0 {
+		mem = view.RecentEvents[len(view.RecentEvents)-1]
+	}
+	// 性格
+	personality := ""
+	if a := p.mod.game.Agent(view.AgentID); a != nil {
+		personality = a.Personality
+	}
+	lines := []string{}
+	if personality != "" {
+		lines = append(lines, "性格："+personality)
+	}
+	lines = append(lines, "目标："+goal)
+	lines = append(lines, "看到："+saw)
+	if mem != "" {
+		lines = append(lines, "记忆："+mem)
+	}
+	lines = append(lines, "因此：我决定"+describeDecision(d))
+	return strings.Join(lines, "\n")
+}
+
+// joinNames 把名字列表连接成"甲、乙、丙"。
+func joinNames(names []string) string {
+	if len(names) == 0 {
+		return ""
+	}
+	return strings.Join(names, "、")
 }
 
 // describeDecision 把决策翻译成人类可读的一句话（Agent Inspector 展示）。
@@ -380,6 +519,8 @@ func (e *gooseExecutor) Execute(ctx context.Context, rt sdk.Runtime, a sdk.Agent
 	}
 	// 交给规则引擎执行（Approve/Reject 由引擎判定）
 	res := e.mod.game.ApplyAction(a.ID, dec.Action, dec.Target, dec.Content)
+	// 回填 DecisionRecord 的 Action / Outcome（M8：让"为什么"闭环——决策 + 结果）
+	e.mod.game.SetDecisionOutcome(a.ID, describeDecision(dec), res.Message)
 	// 检查游戏是否结束
 	if over, winner, reason := e.mod.game.EndIfOver(); over {
 		return fmt.Sprintf("%s → 游戏结束！%s 胜利（%s）", res.Message, winner, reason), nil

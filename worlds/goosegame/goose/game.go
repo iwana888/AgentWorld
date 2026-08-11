@@ -245,6 +245,11 @@ type GameAgent struct {
 	// M5.1 2D 空间：Agent 拥有真实坐标与朝向，在房间"空间"内自由移动。
 	X, Y  float64 // 当前位置（地图坐标）
 	Facing float64 // 朝向角度（弧度，0=右，π/2=下，用于前端角色朝向动画）
+	// M6 自主性可视化：Agent 的性格（personality），Inspector 展示，让 Agent 更有人味。
+	Personality string
+	// M7 "为什么"：最近一次决策的完整依据（目标/看到/记忆/性格/因此），
+	// 由 Planner 在决策时构造。让用户不只是看到"AI 在动"，而是看到"AI 为什么这么做"。
+	LastWhy string
 }
 
 // Task 一个房间里的任务点。
@@ -306,6 +311,9 @@ type GameState struct {
 	EventLog   []string
 	// 最近完成的任务（供 Agent 感知"亲见谁做任务"，减疑）
 	RecentTasks []TaskEvent
+	// M8 DecisionRecord：每次 Agent 决策的结构化记录（按 Agent 存历史），
+	// 供 Replay（时间旅行）与 Agent 行为统计使用。"为什么"从这里来，不只是 UI 字段。
+	Decisions map[int64][]DecisionRecord
 }
 
 // 游戏终局保障常量。
@@ -318,14 +326,15 @@ const (
 
 // NewGame 初始化一局游戏：分配 8 个 Agent 的身份（6 鹅 / 1 鸭 / 1 中立）。
 // agentIDs 是参与游戏的 AgentWorld AgentID 列表（需 8 个）。
-func NewGame(agentIDs []int64, names []string, obs *Observatory) *GameState {
+func NewGame(agentIDs []int64, names []string, personalities []string, obs *Observatory) *GameState {
 	g := &GameState{
-		Phase:     PhaseAction,
-		Agents:    map[int64]*GameAgent{},
-		Rooms:     allRooms,
-		Round:     1,
-		StartedAt: time.Now(),
-		obs:       obs,
+		Phase:      PhaseAction,
+		Agents:     map[int64]*GameAgent{},
+		Rooms:      allRooms,
+		Round:      1,
+		StartedAt:  time.Now(),
+		obs:        obs,
+		Decisions:  map[int64][]DecisionRecord{},
 	}
 	// 身份分配：6 鹅 / 1 鸭 / 1 中立，随机洗牌
 	teams := make([]Team, len(agentIDs))
@@ -344,15 +353,20 @@ func NewGame(agentIDs []int64, names []string, obs *Observatory) *GameState {
 		// 出生在随机房间，拥有房间内的真实坐标（M5.1 2D 空间）
 		room := allRooms[rand.Intn(len(allRooms))]
 		x, y := randomPointIn(room)
+		personality := ""
+		if i < len(personalities) {
+			personality = personalities[i]
+		}
 		g.Agents[id] = &GameAgent{
-			ID:    id,
-			Name:  name,
-			Team:  teams[i],
-			Alive: true,
-			Room:  room,
-			X:     x,
-			Y:     y,
-			Facing: rand.Float64() * 2 * math.Pi,
+			ID:          id,
+			Name:        name,
+			Team:        teams[i],
+			Alive:       true,
+			Room:        room,
+			X:           x,
+			Y:           y,
+			Facing:      rand.Float64() * 2 * math.Pi,
+			Personality: personality,
 		}
 	}
 	// 每个房间撒一些任务点（鹅完成它们）
@@ -375,6 +389,64 @@ func (g *GameState) SetLastDecision(id int64, text string) {
 	if a := g.Agents[id]; a != nil {
 		a.LastDecision = text
 	}
+}
+
+// SetLastWhy 记录某 Agent 最近一次决策的依据（"为什么"，线程安全，前端 Agent Brain 展示）。
+func (g *GameState) SetLastWhy(id int64, text string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if a := g.Agents[id]; a != nil {
+		a.LastWhy = text
+	}
+}
+
+// LastWhyOf 返回某 Agent 最近一次决策的依据（"为什么"）。
+func (g *GameState) LastWhyOf(id int64) string {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if a := g.Agents[id]; a != nil {
+		return a.LastWhy
+	}
+	return ""
+}
+
+// RecordDecision 记录一次决策的上下文（M8 DecisionRecord）。由 Planner 在决策时调用。
+// 返回该条记录的索引（从 0 起），Executor 执行后用 SetDecisionOutcome 回填结果。
+func (g *GameState) RecordDecision(rec DecisionRecord) int {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.Decisions[rec.AgentID] = append(g.Decisions[rec.AgentID], rec)
+	return len(g.Decisions[rec.AgentID]) - 1
+}
+
+// SetDecisionOutcome 回填某 Agent 最近一次决策的 Action / Outcome（Executor 执行后调用）。
+func (g *GameState) SetDecisionOutcome(id int64, action, outcome string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	list := g.Decisions[id]
+	if len(list) == 0 {
+		return
+	}
+	last := &list[len(list)-1]
+	last.Action = action
+	last.Outcome = outcome
+}
+
+// DecisionHistory 返回某 Agent 的决策历史（最新在前，最多 limit 条）。
+func (g *GameState) DecisionHistory(id int64, limit int) []DecisionRecord {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	list := g.Decisions[id]
+	if limit <= 0 || len(list) <= limit {
+		out := make([]DecisionRecord, len(list))
+		copy(out, list)
+		return out
+	}
+	out := make([]DecisionRecord, limit)
+	for i := 0; i < limit; i++ {
+		out[i] = list[len(list)-limit+i]
+	}
+	return out
 }
 
 // AliveCount 存活 Agent 数。
@@ -488,6 +560,21 @@ func (g *GameState) Snapshot() GameSnapshot {
 	return snap
 }
 
+// DecisionRecord 一次决策的完整结构化记录（M8：把"为什么"变成正式概念，而不是 UI 字段）。
+// 每次 Agent 决策时由 Planner 记录决策上下文，Executor 执行后回填 Action / Outcome。
+// 用途：Replay（时间旅行回到过去时刻）与 Agent 行为统计（哪种性格易怀疑、Memory 是否改变决策等）。
+type DecisionRecord struct {
+	AgentID      int64     `json:"agentID"`
+	Timestamp    time.Time `json:"timestamp"`
+	Goal         string    `json:"goal"`         // 决策时 Agent 的目标
+	Perception   string    `json:"perception"`   // 决策时 Agent"看到"什么
+	Memory       string    `json:"memory"`       // 决策时 Agent 记得什么
+	Relationship string    `json:"relationship"` // 决策时对关键对象的信任/怀疑
+	Decision     string    `json:"decision"`     // 决定做什么（"我决定..."）
+	Action       string    `json:"action"`       // 实际执行的动作文本
+	Outcome      string    `json:"outcome"`      // 执行后的结果
+}
+
 // AgentInspector 单个 Agent 的私有状态（Agent Inspector 用，面向调试）。
 // 设计：这是"点开某个 Agent"才按需取回的深度视图。它只含该 Agent 自己的
 // 主观状态（Belief/Relationship/Goal/LastDecision）+ 它视角的事件记忆。
@@ -498,12 +585,15 @@ type AgentInspector struct {
 	Team         string             `json:"team"`
 	Alive        bool               `json:"alive"`
 	Room         string             `json:"room"`
+	Personality  string             `json:"personality"`  // 性格（M6 自主性可视化）
 	Goal         string             `json:"goal"`      // 由身份派生的目标
 	LastDecision string             `json:"lastDecision"`
 	LastAction   string             `json:"lastAction"`
+	LastWhy      string             `json:"lastWhy"`   // "为什么"：最近决策的完整依据（M7）
 	Belief       []SuspectJSON      `json:"belief"`       // 该 Agent 对每人的怀疑
 	Relationship []RelJSON          `json:"relationship"` // 该 Agent 与每人的好感
 	Memory       []string           `json:"memory"`       // 该 Agent 视角的最近事件
+	Decisions    []DecisionRecord   `json:"decisions"`    // 决策历史（最新在前，最多 20 条，M8）
 }
 
 // SuspectJSON 一条主观怀疑（JSON 化）。
@@ -535,8 +625,10 @@ func (g *GameState) Inspector(id int64) *AgentInspector {
 		Team:         me.Team.String(),
 		Alive:        me.Alive,
 		Room:         string(me.Room),
+		Personality:  me.Personality,
 		LastDecision: me.LastDecision,
 		LastAction:   me.LastAction,
+		LastWhy:      me.LastWhy,
 	}
 	switch me.Team {
 	case TeamDuck:
@@ -559,6 +651,15 @@ func (g *GameState) Inspector(id int64) *AgentInspector {
 		ins.Relationship = append(ins.Relationship, RelJSON{AgentID: tid, Name: g.nameOf(tid), Goodwill: r})
 	}
 	ins.Memory = g.RecentEvents(8)
+	// 决策历史（最新在前，最多 20 条）
+	hist := g.DecisionHistory(id, 20)
+	if len(hist) > 0 {
+		// 反转使最新在前
+		for i, j := 0, len(hist)-1; i < j; i, j = i+1, j-1 {
+			hist[i], hist[j] = hist[j], hist[i]
+		}
+		ins.Decisions = hist
+	}
 	return ins
 }
 

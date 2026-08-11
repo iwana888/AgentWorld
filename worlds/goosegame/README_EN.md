@@ -80,6 +80,59 @@ As soon as a body is found, the scene switches to the emergency meeting (the sec
 
 > Ordinary users watch the story; developers watch the agent's mind — that is AgentWorld's core differentiator.
 
+## M8: Making autonomy visible — Why + DecisionRecord + Replay
+
+This layer turns the game into an **Autonomous Agent Observatory**: users don't just see "an AI is moving", they see "why the AI does what it does".
+
+### ① "Why" (Agent Brain)
+
+Click any character → see its decision chain:
+
+```
+🎭 Personality: steady, reliable, team-first
+🎯 Goal: find the duck, do tasks, protect everyone
+👀 Perception: I'm in Cafeteria, alone
+📖 Memory: the vote was a tie, nobody was ejected
+❤️ Relationship: suspicion of XX at 0.72
+Therefore: I decided to move and check another room
+```
+
+> It shows an **action rationale / state summary**, not the LLM's raw chain-of-thought — decisions stay observable without leaking private reasoning.
+
+### ② DecisionRecord (a real concept, not just a UI field)
+
+Every decision is recorded as a structured record (a history per agent):
+
+```
+AgentID       // who
+Timestamp     // when
+Goal          // goal at that time
+Perception    // what it "saw"
+Memory        // what it remembered
+Relationship  // trust/suspicion toward the key target
+Decision      // what it decided
+Action        // action actually executed
+Outcome       // result after execution
+```
+
+This lays the groundwork for **agent-behavior analytics**: which personality suspects the most? Does memory change decisions? Does relationship affect votes?
+
+### ③ Replay (time travel)
+
+Recorded events + DecisionRecord let the world go back in time:
+
+- Click "⏪ Replay" to enter replay mode; **▶ auto-play** (replays a full match in 20s) or drag the timeline
+- The map restores to that moment: agent positions / alive / bodies / meetings
+- Watch how an agent goes from "seeing the world" to "taking action", step by step
+
+```
+AgentWorld (future multi-world)
+│
+├── GooseGame    ← the first Autonomous Agent Observatory
+├── AI Town / Hotel / Trading / Survival / Custom World (planned)
+└── all worlds share: Agent = Personality + Memory + Goal + Relationship + Perception + Planner + Action
+```
+
 ## Architecture
 
 ```
@@ -166,7 +219,7 @@ Mechanics that make matches last longer (no extra config, on by default):
 |---|---|
 | `GET /api/game` | Current state (phase / round / live agent positions (2D) / bodies) |
 | `GET /api/agents` | Public agent info (name / location / alive / identity / 2D coords) |
-| `GET /api/agents/{id}` | Single agent's deep private state (Agent Inspector: Belief / Relationship / Goal / LastDecision / Memory) |
+| `GET /api/agents/{id}` | Single agent's deep private state (Agent Inspector: personality / goal / belief / relationship / memory / last decision / decision history) |
 | `GET /api/events` | Recent events (in-memory, up to 200) |
 | `GET /api/events/stream` | SSE realtime event stream |
 
@@ -179,8 +232,9 @@ Mechanics that make matches last longer (no extra config, on by default):
 - **MeetingOverlay** — meeting-hall scene: round-table seats + speech bubbles + transcript + voting (the second core scene)
 
   ![Emergency meeting with speech bubbles](screenshots/04-meeting-with-speeches.png)
-- **AgentPanel** — Agent Inspector: click a character to see Belief / Relationship / Goal / Last Decision / Memory (Debug mode)
-- **Timeline** — SSE realtime event stream (move / task / kill / speak / vote / meeting / end)
+- **AgentPanel** — Agent Brain: click a character to see personality / goal / belief / relationship / memory / last decision / why / decision history (Debug mode)
+- **Timeline** — SSE realtime event stream (move / task / kill / speak / vote / meeting / end), click an event to see "why"
+- **ReplayTimeline** — time travel: drag the timeline or auto-play to restore the world to a past moment
 
 ## Layout
 

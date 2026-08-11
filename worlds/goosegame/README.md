@@ -80,6 +80,60 @@ AgentWorld 的第一个**游戏世界**（showcase demo），演示在 `agentwor
 
 > 普通用户看故事，开发者看 Agent 的思维——这是 AgentWorld 的核心差异。
 
+## M8：让"自主性"肉眼可见——为什么 + DecisionRecord + Replay
+
+这一层是把 AgentWorld 从"游戏"变成 **Autonomous Agent Observatory**（自主 Agent 观测台）的关键：
+用户不只是看到"AI 在移动"，而是看到"AI 为什么这么做"。
+
+### ① "为什么"（Agent Brain）
+
+点击任何角色 → 展示它的决策链：
+
+```
+🎭 性格：沉稳可靠，团队贵人
+🎯 目标：找出并淘汰鸭子，完成任务保护大家
+👀 看到：我在 Cafeteria，身边无其他人
+📖 记忆：投票平票，无人被淘汰
+❤️ 关系：对 XX 怀疑度 0.72
+因此：我决定移动，换个房间看看
+```
+
+> 展示的是**行动理由 / 状态摘要**，不是 LLM 的内部思维链——保持 Agent 决策过程可见但不泄露原始推理。
+
+### ② DecisionRecord（"为什么"是正式概念，不只是 UI 字段）
+
+每次决策被记录为结构化记录（按 Agent 存历史）：
+
+```
+AgentID     // 谁
+Timestamp   // 何时
+Goal        // 当时的目标
+Perception  // 当时"看到"什么
+Memory      // 当时记得什么
+Relationship// 当时对关键对象的信任/怀疑
+Decision    // 决定做什么
+Action      // 实际执行的动作
+Outcome     // 执行后的结果
+```
+
+这为将来的 **Agent 行为统计** 打下基础：哪种性格最容易怀疑别人？Memory 是否改变决策？Relationship 是否影响投票？
+
+### ③ Replay（时间旅行）
+
+记录的事件 + DecisionRecord 让世界可以**回到过去**：
+
+- 点"⏪ 回放"进入回放模式，**▶ 自动播放**（20 秒演完一场）或拖动时间轴
+- 地图恢复到那一刻：Agent 位置 / 存活 / 尸体 / 会议
+- 观察一个 Agent 怎么从"看到世界"一步步走到"采取行动"
+
+```
+AgentWorld（未来多世界）
+│
+├── GooseGame    ← 第一个 Autonomous Agent Observatory
+├── AI Town / Hotel / Trading / Survival / Custom World（规划中）
+└── 所有世界共用：Agent = Personality + Memory + Goal + Relationship + Perception + Planner + Action
+```
+
 ## 架构
 
 ```
@@ -166,7 +220,7 @@ GOOSE_INTERVAL=12s go run ./worlds/goosegame/cmd/goose
 |---|---|
 | `GET /api/game` | 当前状态（阶段/回合/存活 Agent 位置（2D 坐标）/尸体） |
 | `GET /api/agents` | Agent 公开信息（名字/位置/存活/身份/2D 坐标） |
-| `GET /api/agents/{id}` | 单个 Agent 的深度私有状态（Agent Inspector：Belief/Relationship/Goal/LastDecision/Memory） |
+| `GET /api/agents/{id}` | 单个 Agent 的深度私有状态（Agent Inspector：性格/目标/信念/关系/记忆/最近决策/决策历史） |
 | `GET /api/events` | 最近事件（In-memory，最多 200 条） |
 | `GET /api/events/stream` | SSE 实时事件流 |
 
@@ -179,8 +233,9 @@ GOOSE_INTERVAL=12s go run ./worlds/goosegame/cmd/goose
 - **MeetingOverlay** —— 会议大厅场景：圆桌座位 + 发言气泡 + 发言记录 + 投票（第二个核心场景）
 
   ![紧急会议 + 发言气泡](screenshots/04-meeting-with-speeches.png)
-- **AgentPanel** —— Agent Inspector：点击角色显示 Belief / Relationship / Goal / Last Decision / Memory（Debug 模式）
-- **Timeline** —— SSE 实时事件流（移动/任务/击杀/发言/投票/会议/结束）
+- **AgentPanel** —— Agent Brain：点击角色显示 性格/目标/信念/关系/记忆/最近决策/为什么/决策历史（Debug 模式）
+- **Timeline** —— SSE 实时事件流（移动/任务/击杀/发言/投票/会议/结束），点击事件可看"为什么"
+- **ReplayTimeline** —— 时间旅行：拖动时间轴或自动播放，把世界恢复到过去某时刻
 
 ## 目录
 

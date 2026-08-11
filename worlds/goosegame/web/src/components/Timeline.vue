@@ -7,7 +7,10 @@
       </el-tag>
     </div>
     <el-scrollbar class="timeline-scroll" ref="scrollRef">
-      <div v-for="(ev, i) in events" :key="i" class="timeline-item">
+      <div v-for="(ev, i) in events" :key="i" class="timeline-item"
+        :class="{ clickable: agentOf(ev) != null }"
+        :title="agentOf(ev) != null ? '点击查看为什么' : ''"
+        @click="onClick(ev)">
         <span class="t-time">{{ timeStr(ev.time) }}</span>
         <span class="t-type" :class="typeClass(ev.type)">{{ typeLabel(ev.type) }}</span>
         <span class="t-text">{{ textFor(ev) }}</span>
@@ -22,7 +25,18 @@ import { ref, watch, nextTick } from 'vue'
 import type { ObsEvent } from '../types'
 
 const props = defineProps<{ events: ObsEvent[]; connected: boolean }>()
+const emit = defineEmits<{ (e: 'explain', agentId: number): void }>()
 const scrollRef = ref()
+
+// 事件是否有对应的 Agent（可点开看"为什么"）
+function agentOf(ev: ObsEvent): number | null {
+  const id = ev.data?.agent ?? ev.data?.victim ?? ev.data?.agentID
+  return typeof id === 'number' ? id : null
+}
+function onClick(ev: ObsEvent) {
+  const id = agentOf(ev)
+  if (id != null) emit('explain', id)
+}
 
 // 自动滚动到底部
 watch(() => props.events.length, async () => {
@@ -53,16 +67,19 @@ function typeClass(t: string) {
   }
   return map[t] || ''
 }
+// M6 叙事化：把原始事件翻译成"Agent 带着意图行动"的句子，
+// 让用户看到的不只是移动/发言，而是"这个 Agent 在决定做什么"。
 function textFor(ev: ObsEvent) {
   const d = ev.data
   switch (ev.type) {
-    case 'agent.moved': return `${d.name} → ${d.to}`
-    case 'task.completed': return `${d.name} 完成任务(${d.progress})`
-    case 'agent.killed': return `${d.name} 在 ${d.room} 被发现死亡`
-    case 'meeting.started': return `会议开始：${d.reason}`
-    case 'agent.spoke': return `${d.name}：${d.text}`
-    case 'vote.cast': return `${d.name} 投票`
-    case 'agent.eliminated': return `${d.name}（${d.team}）被淘汰`
+    case 'agent.moved': return `${d.name} 决定去 ${d.toRoom || d.to}`
+    case 'task.completed': return `${d.name} 专注完成了 ${d.room} 的任务`
+    case 'agent.killed': return `${d.name} 在 ${d.room} 被杀害`
+    case 'body.found': return `发现尸体：${d.name} 死在 ${d.room}`
+    case 'meeting.started': return `🚨 紧急会议（${d.reason}）`
+    case 'agent.spoke': return `${d.name}：「${d.text}」`
+    case 'vote.cast': return `${d.name} 把票投给了${d.targetName ? ' ' + d.targetName : '某人'}`
+    case 'agent.eliminated': return `${d.name} 被公投淘汰（${d.team}）`
     case 'game.ended': return `游戏结束 · ${d.winner} 胜：${d.reason}`
     case 'world.event': return d.text || ''
     default: return JSON.stringify(d) || ''
@@ -75,6 +92,8 @@ function textFor(ev: ObsEvent) {
 .timeline-header { display: flex; align-items: center; justify-content: space-between; color: #e2e9ff; font-weight: 700; padding-bottom: 8px; border-bottom: 1px solid #2a3550; }
 .timeline-scroll { flex: 1; margin-top: 8px; }
 .timeline-item { font-size: 12px; padding: 3px 0; color: #aeb9d6; display: flex; gap: 6px; align-items: baseline; }
+.timeline-item.clickable { cursor: pointer; border-radius: 6px; padding-left: 4px; padding-right: 4px; }
+.timeline-item.clickable:hover { background: #1b2640; }
 .t-time { color: #5f6c8f; flex-shrink: 0; }
 .t-type { flex-shrink: 0; }
 .t-type.kill { color: #ff6b6b; }

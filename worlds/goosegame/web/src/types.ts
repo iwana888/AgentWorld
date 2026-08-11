@@ -34,12 +34,27 @@ export interface InspectorData {
   team: string
   alive: boolean
   room: string
+  personality: string
   goal: string
   lastDecision: string
   lastAction: string
+  lastWhy: string
   belief: { agentID: number; name: string; suspicion: number }[]
   relationship: { agentID: number; name: string; goodwill: number }[]
   memory: string[]
+  decisions: DecisionRecord[]
+}
+
+export interface DecisionRecord {
+  agentID: number
+  timestamp: string
+  goal: string
+  perception: string
+  memory: string
+  relationship: string
+  decision: string
+  action: string
+  outcome: string
 }
 
 export interface ObsEvent {
