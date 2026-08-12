@@ -28,6 +28,7 @@ type Perception struct {
 	// M6.1 Labor Market：可雇佣的服务 + 各技能可用的 worker。
 	Services    []ServiceOffer    // 服务市场（价格/所需技能/可用 worker 数）
 	WorkersBySkill map[string][]int64 // 技能 → 拥有该技能的 Agent ID 列表（供 hire）
+	Names       map[int64]string  // Agent ID → 名字（供 Why 展示 hire 的 worker）
 	// 市场机会
 	OpenJobs    []JobPublic
 	Prices      map[string]int64
@@ -129,7 +130,9 @@ func (w *World) BuildPerception(agentID int64) *Perception {
 	// M6.1 Labor Market：注入可雇佣的服务 + 各技能可用的 worker（供 hire_agent 决策）。
 	p.Services = w.laborMarketLocked()
 	p.WorkersBySkill = map[string][]int64{}
+	p.Names = map[int64]string{}
 	for _, ag := range w.Agents {
+		p.Names[ag.ID] = ag.Name
 		for _, as := range ag.Skills {
 			if as.Level > 0 {
 				p.WorkersBySkill[as.SkillID] = append(p.WorkersBySkill[as.SkillID], ag.ID)

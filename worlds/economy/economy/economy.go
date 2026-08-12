@@ -624,8 +624,19 @@ type PublicSnapshot struct {
 	SkillMarket []SkillOffer `json:"skillMarket"`
 	SkillBuys   []SkillBuy   `json:"skillBuys"`
 	// M6.1 Labor Market：服务市场 + 合约统计
-	Services  []ServiceOffer `json:"services"`
-	Contracts []ContractView `json:"contracts"`
+	Services      []ServiceOffer `json:"services"`
+	Contracts     []ContractView `json:"contracts"`     // 最近 40 条（用于展示）
+	ContractStats ContractStats  `json:"contractStats"` // 累计统计（口径清晰，供实验观测）
+}
+
+// ContractStats 合约累计统计（M6.2 统一口径：累计值，非当前快照）。
+type ContractStats struct {
+	Total        int64 `json:"total"`        // 累计创建的合约数
+	Completed    int64 `json:"completed"`    // 累计成功数
+	Failed       int64 `json:"failed"`       // 累计失败数
+	Pending      int64 `json:"pending"`      // 当前进行中
+	TotalVolume  int64 `json:"totalVolume"`  // 累计成交额（completed 的合约金额）
+	MoneyMoved   int64 `json:"moneyMoved"`   // 实际转移金额（worker 实收）
 }
 
 // ContractView 合约的公开视图（Observatory 展示雇佣活动）。
@@ -706,14 +717,34 @@ func (w *World) snapshotLocked() *PublicSnapshot {
 	} else {
 		snap.SkillBuys = w.SkillBuys
 	}
-	// M6.1 Labor Market：服务市场 + 合约（最近 40 条）
+	// M6.1 Labor Market：服务市场 + 合约（最近 40 条）+ 累计统计（清晰口径）
 	snap.Services = w.laborMarketLocked()
-	for _, ct := range w.Contracts {
+	stat := ContractStats{}
+	start := 0
+	if len(w.Contracts) > 40 {
+		start = len(w.Contracts) - 40
+	}
+	for _, ct := range w.Contracts[start:] {
 		snap.Contracts = append(snap.Contracts, ContractView{
 			ID: ct.ID, Employer: ct.Employer, Worker: ct.Worker, Service: ct.Service,
 			Price: ct.Price, Status: ct.Status, CreatedAt: ct.CreatedAt.UnixMilli(),
 		})
 	}
+	// 累计统计基于全部合约（口径：累计值）
+	for _, ct := range w.Contracts {
+		stat.Total++
+		switch ct.Status {
+		case "completed":
+			stat.Completed++
+			stat.TotalVolume += ct.Price
+			stat.MoneyMoved += ct.Price
+		case "failed":
+			stat.Failed++
+		case "pending":
+			stat.Pending++
+		}
+	}
+	snap.ContractStats = stat
 	// 缓存本次快照：版本号未变时的重复请求直接复用
 	w.snapCache = snap
 	w.snapVer = w.version

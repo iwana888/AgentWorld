@@ -131,20 +131,35 @@ func (p *planner) Decide(ctx context.Context, a sdk.Agent, perc sdk.Perception) 
 //
 // 关键：技能投资要在"有闲钱"时优先于继续打工，否则 Agent 会永远接工作、
 // 永远不会停下来评估投资 —— 那 Skill Economy 实验就测不到"投资决策"。
+// EconomicOption M6.2：一个经济决策候选（Buy Skill / Hire Agent / Wait）。
+// 每个候选都计算统一的可比结果（成本/收益/未来价值/风险/评分），
+// Planner 对所有候选统一评分后选最优 —— 而不是用 if/阈值替 Agent 写好策略。
+type EconomicOption struct {
+	Action  string  // buy_skill / hire_agent / wait / do_job
+	Cost    int64   // 立即成本
+	Reward  int64   // 立即收益
+	Future  float64 // 未来价值（0~1，长期潜在回报）
+	Risk    string  // Low / Medium / High
+	Score   float64 // 统一评分（越高越优）
+	Target  int64   // hire 的 worker ID
+	Content string  // buy: skill id; hire: service id; do_job: job title
+	Reason  string
+}
+
 func (p *planner) decideEconomically(v *economy.Perception) *sdk.Decision {
-	// M6.1 架桥：若开放工作里有"想做但缺技能"的机会，进入 Buy Skill vs Hire Agent 的投资决策。
-	// 这是 M5（投资自己）→ M6（使用别人）的分叉点，必须让 Planner 综合权衡，不能硬编码。
+	// M6.2：当有"想做但缺技能"的工作机会，进入统一经济决策 —— 同时评估 Buy/Hire/Wait，
+	// 由 Planner 基于统一评分自主选择，不再用 1.2× 这类人工阈值替 Agent 写策略。
 	if missing := p.missingSkillOpportunity(v); missing != "" {
-		// 先评估雇人（短期、成本低、解决当下）
-		if d := p.evaluateHire(v, missing); d != nil {
-			return d
+		options := []*EconomicOption{
+			p.evaluateBuyOption(v, missing),
+			p.evaluateHireOption(v, missing),
+			p.evaluateWaitOption(v, missing),
 		}
-		// 雇人不合适 → 评估买技能（长期投资）
-		if d := p.evaluateSkill(v); d != nil {
-			return d
+		if best := p.selectBestOption(options); best != nil {
+			return p.optionToDecision(best, v)
 		}
-		// 都不行 → 等待（没钱/不值得）
-		return &sdk.Decision{Action: "idle", Reason: "想做 " + missing + " 的工作但雇不起也买不起，先等待"}
+		// 全部不可行 → 等待
+		return &sdk.Decision{Action: "idle", Reason: "想做 " + missing + " 的工作但当前没有合适方案，先等待"}
 	}
 	// 1) 有可接的工作时，评估是否值得做（先赚眼前的钱）
 	if len(v.OpenJobs) > 0 {
@@ -168,6 +183,263 @@ func (p *planner) decideEconomically(v *economy.Perception) *sdk.Decision {
 	return &sdk.Decision{Action: "idle", Reason: "暂时没有合适的机会，观察市场"}
 }
 
+// selectBestOption 对所有候选统一评分，返回最优；全部不可行返回 nil。
+func (p *planner) selectBestOption(options []*EconomicOption) *EconomicOption {
+	var best *EconomicOption
+	for _, o := range options {
+		if o == nil || o.Score <= 0 {
+			continue
+		}
+		if best == nil || o.Score > best.Score {
+			best = o
+		}
+	}
+	return best
+}
+
+// optionToDecision 把 EconomicOption 转成 sdk.Decision。
+func (p *planner) optionToDecision(o *EconomicOption, v *economy.Perception) *sdk.Decision {
+	switch o.Action {
+	case "buy_skill":
+		return &sdk.Decision{Action: "buy_skill", Content: o.Content, Reason: o.Reason}
+	case "hire_agent":
+		return &sdk.Decision{Action: "hire_agent", Target: o.Target, Content: o.Content, Reason: o.Reason}
+	default:
+		return &sdk.Decision{Action: "idle", Reason: o.Reason}
+	}
+}
+
+// evaluateBuyOption M6.2：评估"买技能"候选（长期投资）。
+// 复用 evaluateSkill 的核心维度（回收期/收入提升/风险/稀缺性/人格），但输出 EconomicOption。
+// 买不起时返回一个 score=0 的候选（仍保留，让 Hire/Wait 能胜过它），而非直接 nil。
+func (p *planner) evaluateBuyOption(v *economy.Perception, skillID string) *EconomicOption {
+	var off *economy.SkillOffer
+	for i := range v.Market {
+		if v.Market[i].SkillID == skillID {
+			off = &v.Market[i]
+			break
+		}
+	}
+	if off == nil || off.Owned {
+		return nil // 无此技能或已拥有
+	}
+	price := off.Price
+	expected := skillIncomeRef[skillID] // 该技能长期收益潜力（满级）
+	cur := currentIncome(v)
+	incomeUp := expected - cur
+	// 风险：买完还剩多少
+	left := v.Balance - price
+	risk := "High"
+	switch {
+	case left < 0:
+		risk = "High" // 买不起
+	case left < 10:
+		risk = "High"
+	case left < price/2:
+		risk = "Medium"
+	default:
+		risk = "Low"
+	}
+	payback := int64(0)
+	if expected > 0 {
+		payback = (price + expected - 1) / expected
+	}
+	// 统一评分（0~1）：成本可负担 + 回收期 + 收入提升 + 风险 + 稀缺性 + 人格 + 职业协同。
+	score := 0.0
+	if v.Balance >= price {
+		score += 0.2 // 买得起
+	}
+	switch {
+	case payback <= 2:
+		score += 0.35
+	case payback <= 5:
+		score += 0.25
+	case payback <= 10:
+		score += 0.15
+	}
+	if incomeUp > 0 {
+		score += 0.15
+	}
+	switch risk {
+	case "Low":
+		score += 0.15
+	case "Medium":
+		score += 0.08
+	}
+	score += p.riskTolerance(v) // 人格：冒险者加成
+	if off.Scarcity > 0 {
+		switch {
+		case off.Owners <= 1:
+			score += 0.1
+		case off.Owners <= 3:
+			score += 0.05
+		}
+	}
+	// M6.2 关键：职业协同 —— 买与自身职业相关/相邻的技能能立刻用上（长期深耕本业），
+	// 跨界技能即使绝对收益高，上手慢、协同低，评分应降低。
+	// 这让不同职业的 Agent 对"买什么技能"产生不同偏好 → 投资方向分化。
+	profSkill := p.professionSkill(v.Profession)
+	if off.SkillID == profSkill {
+		score += 0.2 // 本职业技能：立刻能升，协同最高
+	} else if p.skillRelated(off.SkillID, profSkill) {
+		score += 0.08 // 相邻技能
+	}
+	// 价格亲和：余额有限的 Agent 应更偏好买得起的低价技能（否则容易"想买但一直买不起"）
+	affordComfort := float64(v.Balance) / float64(price)
+	if affordComfort >= 1.5 {
+		score += 0.1 // 余额充裕，随便买
+	} else if affordComfort >= 1.0 {
+		score += 0.03 // 刚好买得起
+	}
+	reason := "买 " + off.Name + "(" + itoaInt64(price) + " coins)，预计单次收入 " + itoaInt64(expected) +
+		"，当前收入 " + itoaInt64(cur) + "，回收约 " + itoaInt64(payback) + " 单，风险 " + risk
+	return &EconomicOption{Action: "buy_skill", Cost: price, Reward: 0, Future: float64(expected) / 100.0,
+		Risk: risk, Score: score, Content: skillID, Reason: reason}
+}
+
+// evaluateHireOption M6.2：评估"雇人"候选（短期一次性）。
+// 关键改进：不再用"余额>=1.2x技能价就不雇"的人工阈值。所有 Agent 都生成 hire 候选，
+// 由统一评分与 buy/wait 比较。费用占余额比越高 → 评分越低（风险）。
+func (p *planner) evaluateHireOption(v *economy.Perception, skillID string) *EconomicOption {
+	var svc *economy.ServiceOffer
+	for i := range v.Services {
+		if v.Services[i].Skill == skillID {
+			svc = &v.Services[i]
+			break
+		}
+	}
+	if svc == nil || svc.AvailableWorkers <= 0 {
+		return nil // 没人提供服务
+	}
+	workers := v.WorkersBySkill[skillID]
+	if len(workers) == 0 {
+		return nil
+	}
+	worker := workers[0]
+	skillPrice := p.skills.PriceOf(skillID)
+	// 该技能当前可做的最高档工作收益（雇人后雇主能得到多少）
+	jobReward := p.bestRewardForSkill(v, skillID)
+	// 风险：服务费占余额比例（越高越危险，可能雇完没钱）
+	risk := "Low"
+	affordRatio := float64(svc.Price) / float64(v.Balance+1)
+	switch {
+	case v.Balance < svc.Price:
+		risk = "High" // 雇不起
+	case affordRatio > 0.5:
+		risk = "High"
+	case affordRatio > 0.25:
+		risk = "Medium"
+	}
+	// 统一评分：付得起 + 服务费相对收益便宜 + 比买技能划算(费用 << 技能价) + 风险
+	score := 0.0
+	if v.Balance >= svc.Price {
+		score += 0.25 // 付得起
+	}
+	// 服务性价比：jobReward vs 服务费（服务费低、收益高 → 划算）
+	if jobReward > 0 && svc.Price > 0 {
+		ratio := float64(jobReward) / float64(svc.Price)
+		if ratio >= 1.5 {
+			score += 0.3
+		} else if ratio >= 1.0 {
+			score += 0.2
+		} else {
+			score += 0.05
+		}
+	}
+	// 相对买技能的成本优势：服务费显著低于技能价 → 短期更划算（加分）
+	if skillPrice > 0 && svc.Price*3 < skillPrice {
+		score += 0.15 // 雇 3 次也不到买技能价 → 短期更优
+	}
+	switch risk {
+	case "Low":
+		score += 0.15
+	case "Medium":
+		score += 0.08
+	}
+	score += p.riskTolerance(v) * 0.5 // 人格对 hire 影响较小（hire 风险低，冒险者略加分）
+	// 有失败风险（worker 可能失败）：Low/Medium 成功率的 worker 有失败成本
+	reason := "雇 " + workerName(v, worker) + " 做 " + svc.Name + "(" + itoaInt64(svc.Price) + " coins)"
+	return &EconomicOption{Action: "hire_agent", Cost: svc.Price,
+		Reward: jobReward, Future: 0, Risk: risk, Score: score,
+		Target: worker, Content: svc.ID, Reason: reason}
+}
+
+// evaluateWaitOption M6.2：评估"等待"候选。
+// 等待 = 不花钱，但损失当下机会（机会成本）。等待的评分很低，
+// 只有在 buy/hire 都不可行或不划算时，wait 才胜出。
+func (p *planner) evaluateWaitOption(v *economy.Perception, skillID string) *EconomicOption {
+	jobReward := p.bestRewardForSkill(v, skillID)
+	// 等待评分：基础低分 + 人格（稳健者更愿意等）+ 若无更好机会则相对可选
+	score := 0.15
+	score += p.riskTolerance(v) * 0.5 // 稳健者等待加分（不愿冒险）
+	// 机会成本：若当前机会收益高，等待的相对价值降低（不主动扣分，保持低基线）
+	reason := "等待更好的机会（" + skillID + " 相关工作的最佳收益 " + itoaInt64(jobReward) + "）"
+	return &EconomicOption{Action: "wait", Cost: 0, Reward: 0,
+		Future: 0, Risk: "Low", Score: score, Content: skillID, Reason: reason}
+}
+
+// professionSkill 返回 Agent 职业对应的技能。
+func (p *planner) professionSkill(profession string) string {
+	switch profession {
+	case "Engineer":
+		return "engineer"
+	case "Farmer":
+		return "farmer"
+	case "Trader":
+		return "trader"
+	case "Courier":
+		return "courier"
+	case "Doctor":
+		return "doctor"
+	case "Miner":
+		return "miner"
+	case "Chef":
+		return "chef"
+	default:
+		return ""
+	}
+}
+
+// skillRelated 判断技能 b 是否与技能 a 相邻/协同（有跨领域增益）。
+// 用于评估"买相邻技能比买完全陌生技能更易上手"。
+func (p *planner) skillRelated(a, b string) bool {
+	// 相邻组合：生产与物流、生产与销售等
+	pairs := [][2]string{
+		{"farmer", "chef"}, {"miner", "engineer"}, {"courier", "trader"},
+		{"farmer", "trader"}, {"chef", "farmer"}, {"engineer", "miner"},
+	}
+	for _, pr := range pairs {
+		if (pr[0] == a && pr[1] == b) || (pr[0] == b && pr[1] == a) {
+			return true
+		}
+	}
+	return false
+}
+
+// bestRewardForSkill 返回该技能当前开放工作中"基础收益最高"的一份（供 hire/do_job 评估）。
+func (p *planner) bestRewardForSkill(v *economy.Perception, skillID string) int64 {
+	best := int64(0)
+	for i := range v.OpenJobs {
+		if v.OpenJobs[i].Skill == skillID && v.OpenJobs[i].Reward > best {
+			best = v.OpenJobs[i].Reward
+		}
+	}
+	return best
+}
+
+// riskTolerance 返回 Agent 人格带来的风险偏好加成（冒险者正、稳健者负）。
+func (p *planner) riskTolerance(v *economy.Perception) float64 {
+	if strings.Contains(v.Personality, "冒险") || strings.Contains(v.Personality, "大胆") ||
+		strings.Contains(v.Personality, "追求") || strings.Contains(v.Personality, "独立") {
+		return 0.15
+	}
+	if strings.Contains(v.Personality, "稳健") || strings.Contains(v.Personality, "谨慎") ||
+		strings.Contains(v.Personality, "理性") || strings.Contains(v.Personality, "冷静") {
+		return -0.1
+	}
+	return 0
+}
+
 // missingSkillOpportunity 返回一个"该 Agent 想做但缺技能"的工作技能（空串=没有）。
 // 即：有开放工作，其技能 Agent 未拥有或等级不够。
 func (p *planner) missingSkillOpportunity(v *economy.Perception) string {
@@ -181,65 +453,11 @@ func (p *planner) missingSkillOpportunity(v *economy.Perception) string {
 	return ""
 }
 
-// evaluateHire M6.1：评估是否雇佣别人完成自己缺技能的工作（Labor Market）。
-// 决策因素：
-//   - 该技能有可雇的服务（v.Services）
-//   - 有可用 worker（v.WorkersBySkill）
-//   - 服务价格明显低于买技能价格（否则自己买更值）
-//   - 余额够付服务费，且服务费占比不过高（避免雇完破产）
-// 返回 hire_agent 决策（选择该技能的某个可用 worker）；不合适返回 nil。
-func (p *planner) evaluateHire(v *economy.Perception, skillID string) *sdk.Decision {
-	// 找到该技能对应的服务
-	var svc *economy.ServiceOffer
-	for i := range v.Services {
-		if v.Services[i].Skill == skillID {
-			svc = &v.Services[i]
-			break
-		}
-	}
-	if svc == nil || svc.AvailableWorkers <= 0 {
-		return nil // 没人提供服务
-	}
-	// 该技能的购买价（用于对比：雇人是否显著便宜）
-	skillPrice := p.skills.PriceOf(skillID)
-	if skillPrice <= 0 {
-		return nil
-	}
-	// 服务费应明显低于买技能价（雇人 = 一次性便宜方案）
-	// 只有当余额够付服务费 且 服务费 <= 余额的 50%（避免雇完没钱） 才考虑雇
-	if v.Balance < svc.Price || svc.Price > int64(float64(v.Balance)*0.5) {
-		return nil // 雇不起
-	}
-	// 服务费不便宜 → 不如自己买技能（交给 evaluateSkill）
-	if svc.Price > skillPrice/2 {
-		return nil
-	}
-	// Buy VS Hire 的真正权衡：
-	//   当余额能舒适买下该技能（余额 ≥ 1.2 × 技能价），且服务费相对技能价便宜到
-	//   值得"买断"时 → 返回 nil，把决策交给 evaluateSkill（可能 BUY，长期投资更划算）。
-	//   否则（余额不足以舒适买技能）→ 雇人解决当下（短期便宜方案）。
-	// 这制造行为分化：有钱 Agent 倾向投资技能，拮据 Agent 倾向雇人。
-	if v.Balance >= int64(float64(skillPrice)*1.2) {
-		// 资金充裕：买技能更值（长期），把机会让给 evaluateSkill
-		return nil
-	}
-	// 选择该技能的可用 worker（取列表第一个；可进一步按等级/价格选优）
-	workers := v.WorkersBySkill[skillID]
-	if len(workers) == 0 {
-		return nil
-	}
-	worker := workers[0]
-	return &sdk.Decision{
-		Action:  "hire_agent",
-		Target:  worker,
-		Content: svc.ID,
-		Reason:  "雇 " + workerName(v, worker) + " 做 " + svc.Name + "(" + itoaInt64(svc.Price) + " coins)，比买 " + skillID + "(" + itoaInt64(skillPrice) + ") 便宜",
-	}
-}
-
 // workerName 返回 worker ID 对应的名字（用于 Why 展示）。
 func workerName(v *economy.Perception, id int64) string {
-	// Perception 不含名字映射，简化返回 ID 数字
+	if n, ok := v.Names[id]; ok && n != "" {
+		return n
+	}
 	return fmt.Sprintf("Agent#%d", id)
 }
 

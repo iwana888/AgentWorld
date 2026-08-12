@@ -10,6 +10,7 @@
 package economy
 
 import (
+	"fmt"
 	"log"
 	"sync"
 	"time"
@@ -166,13 +167,16 @@ type SkillBuy struct {
 	Time      time.Time `json:"time"`
 }
 
-// ---- 初始 20 个 Agent（职业 + 初始资产 + 性格）----
-var InitialProfiles = []struct {
+// AgentProfile 一个 Agent 的人设（名字/职业/性格/初始资产）。
+type AgentProfile struct {
 	Name        string
 	Profession  string
 	Personality string
 	StartCoins  int64
-}{
+}
+
+// ---- 初始 20 个 Agent（职业 + 初始资产 + 性格）----
+var InitialProfiles = []AgentProfile{
 	{"Alice", "Engineer", "稳健，喜欢稳定收益", 120},
 	{"Bob", "Farmer", "勤劳，埋头苦干", 80},
 	{"Charlie", "Trader", "精明，追求利润", 340},
@@ -195,7 +199,9 @@ var InitialProfiles = []struct {
 	{"Tina", "Miner", "独立，少依赖他人", 55},
 }
 
-// NewWorld 创建经济世界，注入 20 个 Agent 的初始状态。
+// NewWorld 创建经济世界，注入 N 个 Agent 的初始状态（N = len(agentIDs)）。
+// 前 20 个用 InitialProfiles 的固定人设；超出部分用 generatedProfile 按职业/性格池生成，
+// 这样既保留 20 个精雕细琢的基线，又能一键扩到 100/200 Agent 跑大规模分化实验。
 // skills 是技能市场注册表（M5：含技能定义与固定价格），供 Agent 做技能投资。
 func NewWorld(agentIDs []int64, names []string, personalities []string, obs *goose.Observatory, skills *skill.Registry) *World {
 	w := &World{
@@ -209,15 +215,18 @@ func NewWorld(agentIDs []int64, names []string, personalities []string, obs *goo
 		startedAt: time.Now(),
 	}
 	w.initServices()
-	// 初始 20 个 Agent
-	for i := 0; i < len(agentIDs) && i < len(InitialProfiles); i++ {
-		p := InitialProfiles[i]
+	for i := 0; i < len(agentIDs); i++ {
+		p := InitialProfiles[i%len(InitialProfiles)]
+		if i < len(InitialProfiles) {
+			p = InitialProfiles[i]
+		} else {
+			p = GeneratedProfile(i)
+		}
 		pers := p.Personality
 		if i < len(personalities) && personalities[i] != "" {
 			pers = personalities[i]
 		}
 		balance := p.StartCoins
-		// 允许通过环境变量/外部覆盖初始资产（第一阶段固定也可）
 		w.Agents[agentIDs[i]] = &Agent{
 			ID:            agentIDs[i],
 			Name:          names[i],
@@ -239,6 +248,25 @@ func NewWorld(agentIDs []int64, names []string, personalities []string, obs *goo
 	log.Printf("[economy] 经济世界启动：%d 个 Agent，初始总资产 %d coins",
 		len(w.Agents), w.totalWealth())
 	return w
+}
+
+// GeneratedProfile 为超出 InitialProfiles 的索引生成人设（职业循环 + 性格池 + 初始资产）。
+// 支持大规模实验（100/200 Agent）时，每个人依然有职业/性格/资金差异。
+// 索引 i 从 0 开始（对应第 i+1 个 Agent）。
+func GeneratedProfile(i int) AgentProfile {
+	professions := []string{"Engineer", "Farmer", "Trader", "Courier", "Doctor", "Miner", "Chef"}
+	personalities := []string{
+		"稳健，喜欢稳定收益", "冒险，追求高回报", "谨慎，助人为乐", "精明，追求利润",
+		"踏实，看天吃饭", "大胆，敢冒险", "理性，重视声誉", "独立，少依赖他人",
+	}
+	baseCoins := []int64{60, 90, 120, 150, 40, 70, 100, 200}
+	prof := professions[i%len(professions)]
+	pers := personalities[i%len(personalities)]
+	coins := baseCoins[i%len(baseCoins)] + int64((i*7)%25) // 微调，制造资金差异
+	return AgentProfile{
+		Name: fmt.Sprintf("Agent%d", i+1), Profession: prof,
+		Personality: pers, StartCoins: coins,
+	}
 }
 
 // initServices 初始化 Labor Market 的服务市场（M6.1）。

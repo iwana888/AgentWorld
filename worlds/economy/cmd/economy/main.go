@@ -18,6 +18,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -61,8 +62,14 @@ func main() {
 		defer sqlDB.Close()
 	}
 
-	// 创建/复用 20 个经济 Agent。
-	agentIDs, names, personalities := ensureAgents(d)
+	// Agent 数量：默认 20，可通过 ECO_AGENTS 扩展到 100/200（大规模分化实验）。
+	n := 20
+	if v := os.Getenv("ECO_AGENTS"); v != "" {
+		if c, err := strconv.Atoi(v); err == nil && c > 0 {
+			n = c
+		}
+	}
+	agentIDs, names, personalities := ensureAgents(d, n)
 
 	llmClient := llm.New(
 		envOr("LLM_BASE_URL", "https://api.deepseek.com/v1"),
@@ -130,12 +137,20 @@ func main() {
 	log.Printf("[economy] 收到退出信号，正在停止…")
 }
 
-// ensureAgents 创建或复用 20 个经济 Agent。
-func ensureAgents(d *gorm.DB) ([]int64, []string, []string) {
-	ids := make([]int64, 0, len(ec.InitialProfiles))
-	names := make([]string, 0, len(ec.InitialProfiles))
-	personalities := make([]string, 0, len(ec.InitialProfiles))
-	for _, p := range ec.InitialProfiles {
+// ensureAgents 创建或复用 n 个经济 Agent。
+// 前 20 个用 InitialProfiles 精雕人设；超出部分用 GeneratedProfile 循环生成（大规模实验用）。
+func ensureAgents(d *gorm.DB, n int) ([]int64, []string, []string) {
+	ids := make([]int64, 0, n)
+	names := make([]string, 0, n)
+	personalities := make([]string, 0, n)
+	profileAt := func(i int) ec.AgentProfile {
+		if i < len(ec.InitialProfiles) {
+			return ec.InitialProfiles[i]
+		}
+		return ec.GeneratedProfile(i)
+	}
+	for i := 0; i < n; i++ {
+		p := profileAt(i)
 		name := "ECO_" + p.Name
 		a, err := db.GetAgentByName(d, name)
 		if err != nil {
