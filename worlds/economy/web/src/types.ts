@@ -34,6 +34,11 @@ export interface GameSnapshot {
   totalWealth: number
 }
 
+export interface AgentSkill {
+  skillID: string
+  level: number
+}
+
 export interface InspectorData {
   id: number
   name: string
@@ -47,7 +52,7 @@ export interface InspectorData {
   lastDecision: string
   lastAction: string
   lastWhy: string
-  skill: Record<string, number>
+  skills: AgentSkill[]
 }
 
 export interface ObsEvent {

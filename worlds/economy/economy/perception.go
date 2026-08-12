@@ -7,6 +7,8 @@ package economy
 
 import (
 	"sort"
+
+	"agentworld/internal/skill"
 )
 
 // Perception 一个 Agent 在经济世界中的完整感知视图。
@@ -18,6 +20,8 @@ type Perception struct {
 	Goal       string
 	Balance    int64
 	Inventory  map[string]int
+	// M7 技能系统：该 Agent 拥有的技能集合（决定它"看得见"哪些工具）
+	Skills      []skill.AgentSkill
 	// 市场机会
 	OpenJobs    []JobPublic
 	Prices      map[string]int64
@@ -25,6 +29,16 @@ type Perception struct {
 	WealthRank  int      // 财富排名（1=最富）
 	AgentCount  int
 	TotalWealth int64
+}
+
+// SkillLevel 返回该 Agent 对某技能的熟练度（0=未拥有）。
+func (p *Perception) SkillLevel(skillID string) int {
+	return skill.LevelOf(p.Skills, skillID)
+}
+
+// HasSkill 返回该 Agent 是否拥有某技能。
+func (p *Perception) HasSkill(skillID string) bool {
+	return p.SkillLevel(skillID) > 0
 }
 
 // BuildPerception 构建某 Agent 的经济感知（基于世界当前状态）。
@@ -44,6 +58,7 @@ func (w *World) BuildPerception(agentID int64) *Perception {
 		Balance:     a.Balance,
 		Inventory:   map[string]int{},
 		Prices:      map[string]int64{},
+		Skills:      a.Skills,
 	}
 	for g, q := range a.Inventory {
 		p.Inventory[g] = q

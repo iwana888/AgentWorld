@@ -92,7 +92,7 @@ func (w *World) DoJob(agentID, jobID int64) (int64, string) {
 	defer w.mu.Unlock()
 	for _, j := range w.Jobs {
 		if j.ID == jobID && j.Status == "claimed" && j.ClaimedBy == agentID {
-			skill := w.Agents[agentID].Skill[j.Skill]
+			skill := w.Agents[agentID].SkillLevel(j.Skill)
 			success := rand.Float64() < 0.3+0.5*float64(skill)/7.0
 			if success {
 				j.Status = "done"
@@ -354,12 +354,35 @@ func (w *World) Inspector(id int64) map[string]interface{} {
 		"balance": a.Balance, "inventory": a.Inventory, "goal": a.Goal,
 		"totalEarned": a.TotalEarned, "totalSpent": a.TotalSpent,
 		"lastDecision": a.LastDecision, "lastAction": a.LastAction, "lastWhy": a.LastWhy,
-		"skill": a.Skill,
+		"skills": a.Skills,
 	}
 }
 
 // Observatory 返回事件总线。
 func (w *World) Observatory() *goose.Observatory { return w.obs }
+
+// JobSkill 返回某工作所需的技能（Executor 映射工具用）。
+func (w *World) JobSkill(jobID int64) string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	for _, j := range w.Jobs {
+		if j.ID == jobID {
+			return j.Skill
+		}
+	}
+	return ""
+}
+
+// PublishSkillUsed 发布技能使用事件（M7：Timeline 显示 Agent 用了哪个技能）。
+func (w *World) PublishSkillUsed(agentID int64, tool, result string) {
+	name := ""
+	if a := w.Agent(agentID); a != nil {
+		name = a.Name
+	}
+	w.obs.Publish("agent.skill.used", map[string]interface{}{
+		"agent": agentID, "name": name, "tool": tool, "result": result,
+	})
+}
 
 // Agent 返回某 Agent（调用方注意：返回指针，读字段安全，外部勿并发写）。
 func (w *World) Agent(id int64) *Agent {
@@ -373,7 +396,7 @@ func (w *World) SkillOf(agentID int64, skill string) int {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if a, ok := w.Agents[agentID]; ok {
-		return a.Skill[skill]
+		return a.SkillLevel(skill)
 	}
 	return 0
 }

@@ -62,12 +62,13 @@
         </div>
       </div>
 
-      <div class="sec" v-if="skillList.length">
-        <div class="sec-label">🛠️ 技能</div>
+      <div class="sec" v-if="skills.length">
+        <div class="sec-label">🛠️ 技能（Skill System）</div>
         <div class="skills">
-          <div v-for="[name, s] in skillList" :key="name" class="skill-item">
-            <span class="skill-name">{{ name }}</span>
-            <el-progress :percentage="skillPct(s)" :stroke-width="6" class="skill-bar" :show-text="false" />
+          <div v-for="s in skills" :key="s.skillID" class="skill-item">
+            <span class="skill-name">{{ s.skillID }} <span class="skill-lv">Lv{{ s.level }}</span></span>
+            <el-progress :percentage="skillPct(s.level)" :stroke-width="6" class="skill-bar" :show-text="false"
+              :color="skillColor(s.level)" />
           </div>
         </div>
       </div>
@@ -107,10 +108,13 @@ const whyParsed = computed(() => {
   })
 })
 const invList = computed(() => Object.entries(inspector.value?.inventory || {}).filter(([, q]) => q > 0))
-const skillList = computed(() => Object.entries(inspector.value?.skill || {}).slice(0, 4))
+const skills = computed(() => (inspector.value?.skills || []).filter(s => s.level > 0).sort((a, b) => b.level - a.level))
 
 function emoji(p: string) { return profEmoji(p) }
-function skillPct(s: number) { return Math.round((s / 7) * 100) }
+function skillPct(level: number) { return Math.round((level / 7) * 100) }
+function skillColor(level: number) {
+  return level >= 6 ? '#ffd166' : level >= 4 ? '#7cc3ff' : '#3d5278'
+}
 </script>
 
 <style scoped>
@@ -145,7 +149,8 @@ function skillPct(s: number) { return Math.round((s / 7) * 100) }
 .inv-tag { margin-right: 0; }
 .skills { display: flex; flex-direction: column; gap: 5px; }
 .skill-item { display: flex; align-items: center; gap: 8px; }
-.skill-name { color: #c6d0e8; font-size: 11px; width: 60px; flex-shrink: 0; }
+.skill-name { color: #c6d0e8; font-size: 11px; width: 76px; flex-shrink: 0; text-transform: capitalize; }
+.skill-lv { color: #7cc3ff; font-weight: 700; margin-left: 3px; }
 .skill-bar { flex: 1; }
 .no-data { color: #5a6278; font-size: 12px; }
 </style>

@@ -65,6 +65,7 @@ Multiple agents autonomously live and cooperate inside one or more worlds, and c
 | **Hotel** | Business agents + tool calling + MCP | Front-desk agent issues real room keys via PMS on check-in |
 | **Game** | Third-party SDK extensibility | `examples/gameworld`: a level-up world written with the `sdk` package |
 | **GooseGame** | Info-isolated social deduction world + 2D game UI | 8 agents (6 goose / 1 duck / 1 dodo) play **Duck, Duck, Goose** on a 6-room 2D spaceship map: hidden identities, Belief & Relationship, meeting scenes, votes — watch it live in the browser — [README](worlds/goosegame/README_EN.md) |
+| **Economy** | Resource-constrained autonomy + Skill System | 20 agents (Engineer/Farmer/Trader/Courier/…) produce, trade, earn & spend under money pressure; Skill System: agents only see the tools their skills unlock (skill isolation), skill level affects success — watch wealth emerge — [README](worlds/economy/README_EN.md) |
 
 ### Screenshots
 

@@ -72,6 +72,8 @@ func main() {
 
 	brk := bus.NewBroker()
 	rt := agent.NewRuntime(d, llmClient, brk)
+	// 注册经济世界的工具能力（M7 Skill System：repair_machine 等，本地模拟后端）
+	rt.Capabilities.Register(ec.BuildCapability())
 	// 事件总线（观察台），复用 goosegame 的通用 Observatory。
 	obs := goose.NewObservatory(goose.ObservOpts{MaxEvents: 1000})
 	mod := economy.New(agentIDs, names, personalities, obs)

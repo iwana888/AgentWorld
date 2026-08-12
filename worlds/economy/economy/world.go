@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"agentworld/internal/skill"
 	"agentworld/worlds/goosegame/goose"
 )
 
@@ -29,7 +30,10 @@ type Agent struct {
 	Goal        string            // 当前经济目标（可由 Planner 更新）
 	Balance     int64             // 钱包余额
 	Inventory   map[string]int    // 库存（商品 -> 数量）
-	Skill       map[string]int    // 各工种技能水平（决定工作成功率/收益）
+	// M7 Skill System：技能集合 + 等级共存。
+	//   SkillID 决定"能不能用"（技能隔离：只看到该技能对应的 Tool）。
+	//   Level 决定"做得好不好"（成功率/收益预期）。
+	Skills []skill.AgentSkill // 例如 [{engineer,5},{trader,2}]
 	Relationships map[int64]float64 // 对其他 Agent 的信任度（-1~+1，M：关系影响交易）
 	LastDecision string            // 最近决策
 	LastAction   string            // 最近动作
@@ -37,6 +41,16 @@ type Agent struct {
 	TotalEarned  int64             // 累计赚取（统计）
 	TotalSpent   int64             // 累计花费（统计）
 	LastTradeAt  time.Time         // 上次交易时间（避免连续刷）
+}
+
+// SkillLevel 返回 Agent 对某技能的熟练度（0=未拥有）。
+func (a *Agent) SkillLevel(skillID string) int {
+	return skill.LevelOf(a.Skills, skillID)
+}
+
+// HasSkill 返回 Agent 是否拥有某技能。
+func (a *Agent) HasSkill(skillID string) bool {
+	return a.SkillLevel(skillID) > 0
 }
 
 // ---- 市场 / 商品 ----
@@ -142,7 +156,7 @@ func NewWorld(agentIDs []int64, names []string, personalities []string, obs *goo
 			Goal:          "赚到更多钱，改善生活",
 			Balance:       balance,
 			Inventory:     map[string]int{},
-			Skill:         defaultSkills(p.Profession),
+			Skills:        defaultSkills(p.Profession),
 			Relationships: map[int64]float64{},
 			TotalEarned:   0,
 			TotalSpent:    0,
@@ -177,30 +191,41 @@ func initMarket(w *World) {
 	}
 }
 
-// defaultSkills 根据职业初始化各工种技能。
-func defaultSkills(profession string) map[string]int {
-	base := map[string]int{
-		"engineer": 3, "farmer": 3, "trader": 3, "courier": 3, "doctor": 3,
-		"miner": 3, "chef": 3,
+// defaultSkills 根据职业初始化 Agent 的技能集合（M7：技能 + 等级共存）。
+// 每个 Agent 拥有多个技能：本职业等级 7，其余职业等级 2（辅助）。
+// 这让"目标影响技能选择"实验成为可能（如 Engineer 同时有 engineer 和 trader）。
+func defaultSkills(profession string) []skill.AgentSkill {
+	all := []string{"engineer", "farmer", "trader", "courier", "doctor", "miner", "chef"}
+	out := make([]skill.AgentSkill, 0, len(all))
+	for _, id := range all {
+		level := 2
+		if skillIDToProfession(id) == profession {
+			level = 7
+		}
+		out = append(out, skill.AgentSkill{SkillID: id, Level: level})
 	}
-	// 本职业高技能
-	switch profession {
-	case "Engineer":
-		base["engineer"] = 7
-	case "Farmer":
-		base["farmer"] = 7
-	case "Trader":
-		base["trader"] = 7
-	case "Courier":
-		base["courier"] = 7
-	case "Doctor":
-		base["doctor"] = 7
-	case "Miner":
-		base["miner"] = 7
-	case "Chef":
-		base["chef"] = 7
+	return out
+}
+
+// skillIDToProfession 把技能 ID 映射回职业名（用于判断本职业技能）。
+func skillIDToProfession(id string) string {
+	switch id {
+	case "engineer":
+		return "Engineer"
+	case "farmer":
+		return "Farmer"
+	case "trader":
+		return "Trader"
+	case "courier":
+		return "Courier"
+	case "doctor":
+		return "Doctor"
+	case "miner":
+		return "Miner"
+	case "chef":
+		return "Chef"
 	}
-	return base
+	return ""
 }
 
 // spawnInitialJobs 开局生成一批工作需求。
