@@ -24,6 +24,7 @@ export interface JobPublic {
   title: string
   reward: number
   skill: string
+  minLevel: number   // M5.1 所需技能最低等级
 }
 
 export interface SkillOffer {
@@ -33,6 +34,39 @@ export interface SkillOffer {
   price: number
   owned: boolean
   ownLevel: number
+  // M5.1 稀缺性
+  owners: number
+  demand: number
+  scarcity: number
+}
+
+// M6.1 劳动力市场
+export interface ServiceOffer {
+  id: string
+  name: string
+  skill: string
+  minLevel: number
+  price: number
+  availableWorkers: number
+}
+
+export interface ContractView {
+  id: number
+  employer: number
+  worker: number
+  service: string
+  price: number
+  status: string   // completed / failed / pending
+  createdAt: number
+}
+
+export interface ContractStats {
+  total: number
+  completed: number
+  failed: number
+  pending: number
+  totalVolume: number
+  moneyMoved: number
 }
 
 export interface SkillBuy {
@@ -54,6 +88,10 @@ export interface GameSnapshot {
   totalWealth: number
   skillMarket: SkillOffer[]
   skillBuys: SkillBuy[]
+  // M6.1 劳动力市场
+  services: ServiceOffer[]
+  contracts: ContractView[]
+  contractStats: ContractStats
 }
 
 export interface AgentSkill {
@@ -111,6 +149,8 @@ export const TX_META: Record<string, { label: string; color: string; icon: strin
   'sale':       { label: '卖出', color: '#9ee6b0', icon: '📈' },
   'transfer':   { label: '转账', color: '#e5c07b', icon: '🔁' },
   'consume':    { label: '消费', color: '#b07ce0', icon: '🍽️' },
+  'contract-pay':   { label: '雇佣付款', color: '#7cc3ff', icon: '🤝' },
+  'contract-refund': { label: '合约退款', color: '#ff7b72', icon: '↩️' },
 }
 
 export function txMeta(kind: string) {
