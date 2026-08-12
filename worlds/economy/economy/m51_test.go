@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"agentworld/internal/skill"
+	"agentworld/worlds/goosegame/goose"
 )
 
 // TestIncomeMultiplier 验证技能等级 → 收益倍率（M5.1 核心）。
@@ -45,6 +46,7 @@ func TestJobTemplateLevels(t *testing.T) {
 // TestDoJobLevelGate 验证等级门槛：低等级 Agent 做不了需要更高等级的工作。
 func TestDoJobLevelGate(t *testing.T) {
 	w := &World{
+		obs: goose.NewObservatory(goose.ObservOpts{}),
 		Agents: map[int64]*Agent{
 			1: {ID: 1, Skills: []skill.AgentSkill{{SkillID: "engineer", Level: 2}}},
 		},

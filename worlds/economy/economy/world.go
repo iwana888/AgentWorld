@@ -97,8 +97,31 @@ type Transaction struct {
 	From     int64    // 付款方（0=世界）
 	To       int64    // 收款方（0=世界）
 	Amount   int64
-	Kind     string   // job-reward / purchase / sale / transfer / consume
+	Kind     string   // job-reward / purchase / sale / transfer / consume / contract-pay
 	Detail   string
+}
+
+// Service 一种可被雇佣的技能服务（M6.1 Labor Market）。
+// MVP 固定价格，不做动态定价。
+type Service struct {
+	ID       string // 服务 ID（如 "repair_machine"）
+	Name     string // 显示名
+	Skill    string // 所需技能
+	MinLevel int    // 最低技能等级
+	Price    int64  // 固定服务价格（雇主付给 worker）
+}
+
+// Contract 一份雇佣合约（M6.1）。
+// 交易不能直接转账，走合约 + Escrow 托管，保证"付钱后 worker 才执行"。
+type Contract struct {
+	ID        int64
+	Employer  int64    // 雇主（付款方）
+	Worker    int64    // 服务提供方（收款方）
+	Service   string   // 服务名
+	Price     int64    // 合约价（= 服务固定价）
+	Status    string   // pending / completed / failed
+	CreatedAt time.Time
+	Escrow    int64    // 托管金额（雇主导出，完成后给 worker / 失败退回）
 }
 
 // World 经济世界状态（单例，带锁）。
@@ -113,6 +136,10 @@ type World struct {
 	skills     *skill.Registry   // 技能市场（M5：技能定义 + 固定价格）
 	// M5 实验观测：技能购买记录（谁买/花多少/买的什么）+ 投资收益统计
 	SkillBuys  []SkillBuy
+	// M6.1 Labor Market：可雇佣的服务 + 合约记录
+	Services  map[string]*Service // 服务市场（id → 服务定义，固定价格）
+	Contracts []*Contract         // 合约记录（谁雇佣谁/状态）
+	nextContractID int64
 	nextJobID  int64
 	nextTxID   int64
 	round      int
@@ -172,14 +199,16 @@ var InitialProfiles = []struct {
 // skills 是技能市场注册表（M5：含技能定义与固定价格），供 Agent 做技能投资。
 func NewWorld(agentIDs []int64, names []string, personalities []string, obs *goose.Observatory, skills *skill.Registry) *World {
 	w := &World{
-		obs:      obs,
-		Agents:   map[int64]*Agent{},
-		Goods:    map[string]*Goods{},
-		Prices:   map[string]int64{},
-		skills:   skills,
+		obs:       obs,
+		Agents:    map[int64]*Agent{},
+		Goods:     map[string]*Goods{},
+		Prices:    map[string]int64{},
+		skills:    skills,
 		SkillBuys: []SkillBuy{},
+		Services:  map[string]*Service{},
 		startedAt: time.Now(),
 	}
+	w.initServices()
 	// 初始 20 个 Agent
 	for i := 0; i < len(agentIDs) && i < len(InitialProfiles); i++ {
 		p := InitialProfiles[i]
@@ -210,6 +239,22 @@ func NewWorld(agentIDs []int64, names []string, personalities []string, obs *goo
 	log.Printf("[economy] 经济世界启动：%d 个 Agent，初始总资产 %d coins",
 		len(w.Agents), w.totalWealth())
 	return w
+}
+
+// initServices 初始化 Labor Market 的服务市场（M6.1）。
+// 服务价格 < 对应技能价格（否则 Agent 没理由雇人而不买技能）。
+// 这制造 M5→M6 的架桥决策：买技能（100，长期）vs 雇人（20，一次性）。
+func (w *World) initServices() {
+	for _, s := range []*Service{
+		{ID: "repair_machine", Name: "Repair Machine", Skill: "engineer", MinLevel: 1, Price: 20},
+		{ID: "harvest_crops", Name: "Harvest Crops", Skill: "farmer", MinLevel: 1, Price: 10},
+		{ID: "collect_data", Name: "Collect Data", Skill: "courier", MinLevel: 1, Price: 8},
+		{ID: "medical_treatment", Name: "Medical Treatment", Skill: "doctor", MinLevel: 1, Price: 25},
+		{ID: "mine_ore", Name: "Mine Ore", Skill: "miner", MinLevel: 1, Price: 15},
+		{ID: "cook_meal", Name: "Cook Meal", Skill: "chef", MinLevel: 1, Price: 10},
+	} {
+		w.Services[s.ID] = s
+	}
 }
 
 // initMarket 初始化商品市场（10 种商品 + 初始价格）。

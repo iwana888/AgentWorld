@@ -25,6 +25,9 @@ type Perception struct {
 	// M5 Skill Economy：Skill Marketplace 感知 —— 市场上可买的技能及其价格。
 	// Agent 基于"当前能力 + 市场机会"评估是否做技能投资。
 	Market      []SkillOffer
+	// M6.1 Labor Market：可雇佣的服务 + 各技能可用的 worker。
+	Services    []ServiceOffer    // 服务市场（价格/所需技能/可用 worker 数）
+	WorkersBySkill map[string][]int64 // 技能 → 拥有该技能的 Agent ID 列表（供 hire）
 	// 市场机会
 	OpenJobs    []JobPublic
 	Prices      map[string]int64
@@ -121,6 +124,16 @@ func (w *World) BuildPerception(agentID int64) *Perception {
 				Price: s.BasePrice, Owned: lv > 0, OwnLevel: lv,
 				Owners: owners, Demand: dem, Scarcity: scarcity,
 			})
+		}
+	}
+	// M6.1 Labor Market：注入可雇佣的服务 + 各技能可用的 worker（供 hire_agent 决策）。
+	p.Services = w.laborMarketLocked()
+	p.WorkersBySkill = map[string][]int64{}
+	for _, ag := range w.Agents {
+		for _, as := range ag.Skills {
+			if as.Level > 0 {
+				p.WorkersBySkill[as.SkillID] = append(p.WorkersBySkill[as.SkillID], ag.ID)
+			}
 		}
 	}
 	// 财富排名

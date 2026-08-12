@@ -361,6 +361,142 @@ func (w *World) skillMarketLocked() []SkillOffer {
 	return out
 }
 
+// ServiceOffer 劳动力市场上可雇佣的一个服务（含该技能可用的 worker 视图）。
+type ServiceOffer struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Skill    string `json:"skill"`
+	MinLevel int    `json:"minLevel"`
+	Price    int64  `json:"price"` // 固定服务价格
+	// 可用 worker 统计（谁有能力提供服务）
+	AvailableWorkers int `json:"availableWorkers"` // 拥有该技能的 Agent 数
+}
+
+// LaborMarket 返回劳动力市场的公开快照（供 Planner 感知 + 前端）。
+func (w *World) LaborMarket() []ServiceOffer {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.laborMarketLocked()
+}
+
+// laborMarketLocked 无锁构建劳动力市场快照（调用方需持锁）。
+func (w *World) laborMarketLocked() []ServiceOffer {
+	out := make([]ServiceOffer, 0, len(w.Services))
+	// 统计每个技能拥有者数（可用 worker）
+	workers := map[string]int{}
+	for _, ag := range w.Agents {
+		for _, as := range ag.Skills {
+			if as.Level > 0 {
+				workers[as.SkillID]++
+			}
+		}
+	}
+	for _, s := range w.Services {
+		out = append(out, ServiceOffer{
+			ID: s.ID, Name: s.Name, Skill: s.Skill, MinLevel: s.MinLevel, Price: s.Price,
+			AvailableWorkers: workers[s.Skill],
+		})
+	}
+	return out
+}
+
+// HireAgent M6.1：雇主雇佣 worker 完成一个服务（Labor Market 交易）。
+//   - 校验：雇主余额足够、worker 存在且拥有对应技能（等级够）
+//   - Escrow：创建 Contract，立即把服务费从雇主余额锁进合约
+//   - 返回 (contractID, 是否创建成功)
+// 创建后由 executor 立即调用 ExecuteContract 让 worker 执行。
+func (w *World) HireAgent(employer, worker int64, serviceID string) (int64, bool) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	svc, ok := w.Services[serviceID]
+	if !ok {
+		return 0, false
+	}
+	if employer == worker {
+		return 0, false // 不能雇自己
+	}
+	emp, ok := w.Agents[employer]
+	if !ok || emp.Balance < svc.Price {
+		return 0, false // 雇主余额不足
+	}
+	wrk, ok := w.Agents[worker]
+	if !ok {
+		return 0, false
+	}
+	lv := wrk.SkillLevel(svc.Skill)
+	if lv < svc.MinLevel {
+		return 0, false // worker 没有该技能或等级不够
+	}
+	// Escrow：从雇主扣款锁进合约
+	emp.Balance -= svc.Price
+	emp.TotalSpent += svc.Price
+	ct := &Contract{
+		ID: w.nextContractID, Employer: employer, Worker: worker,
+		Service: svc.Name, Price: svc.Price, Status: "pending",
+		CreatedAt: time.Now(), Escrow: svc.Price,
+	}
+	w.nextContractID++
+	w.Contracts = append(w.Contracts, ct)
+	w.touchVersionLocked()
+	w.obs.Publish("contract.created", map[string]interface{}{
+		"id": ct.ID, "employer": employer, "worker": worker, "service": svc.Name, "price": svc.Price,
+	})
+	return ct.ID, true
+}
+
+// ExecuteContract M6.1：worker 执行合约服务（领取即做）。
+//   - 按 worker 技能成功率判定
+//   - 成功：Escrow 释放给 worker（Transfer 记录）+ 技能升级
+//   - 失败：Escrow 退回雇主 + Contract failed
+// 返回 (worker 实际收入, 结果描述)。
+func (w *World) ExecuteContract(contractID int64) (int64, string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	for _, ct := range w.Contracts {
+		if ct.ID != contractID || ct.Status != "pending" {
+			continue
+		}
+		wrk := w.Agents[ct.Worker]
+		if wrk == nil {
+			// worker 消失：退回雇主
+			ct.Status = "failed"
+			w.obs.Publish("contract.failed", map[string]interface{}{"id": ct.ID, "reason": "worker gone"})
+			return 0, "worker 不存在，合约失败"
+		}
+		// 该合约对应的服务技能
+		var svcSkill string
+		for _, s := range w.Services {
+			if s.Name == ct.Service {
+				svcSkill = s.Skill
+				break
+			}
+		}
+		lv := wrk.SkillLevel(svcSkill)
+		success := rand.Float64() < 0.3+0.5*float64(lv)/7.0
+		if success {
+			ct.Status = "completed"
+			// Escrow 释放给 worker
+			w.transferLocked(0, ct.Worker, ct.Escrow, "contract-pay", ct.Service)
+			if a, ok := w.Agents[ct.Worker]; ok {
+				a.SkillEarned += ct.Escrow
+				a.UpgradeSkill(svcSkill) // worker 通过服务升级技能
+			}
+			w.obs.Publish("contract.completed", map[string]interface{}{
+				"id": ct.ID, "employer": ct.Employer, "worker": ct.Worker, "service": ct.Service, "price": ct.Escrow,
+			})
+			return ct.Escrow, "完成了" + ct.Service + "，获得" + itoa(ct.Escrow) + " coins"
+		}
+		ct.Status = "failed"
+		// 失败：Escrow 退回雇主
+		w.transferLocked(0, ct.Employer, ct.Escrow, "contract-refund", ct.Service+"退款")
+		w.obs.Publish("contract.failed", map[string]interface{}{
+			"id": ct.ID, "employer": ct.Employer, "worker": ct.Worker, "service": ct.Service, "refund": ct.Escrow,
+		})
+		return 0, "服务" + ct.Service + "失败了，费用退回"
+	}
+	return 0, "合约不存在或已结束"
+}
+
 // Consume 消费（用库存满足需求，或直接花钱）。
 func (w *World) Consume(agentID int64, goods string) bool {
 	w.mu.Lock()
@@ -487,6 +623,20 @@ type PublicSnapshot struct {
 	// M5 Skill Economy：技能市场 + 技能购买记录（Observatory 回答实验问题）
 	SkillMarket []SkillOffer `json:"skillMarket"`
 	SkillBuys   []SkillBuy   `json:"skillBuys"`
+	// M6.1 Labor Market：服务市场 + 合约统计
+	Services  []ServiceOffer `json:"services"`
+	Contracts []ContractView `json:"contracts"`
+}
+
+// ContractView 合约的公开视图（Observatory 展示雇佣活动）。
+type ContractView struct {
+	ID        int64  `json:"id"`
+	Employer  int64  `json:"employer"`
+	Worker    int64  `json:"worker"`
+	Service   string `json:"service"`
+	Price     int64  `json:"price"`
+	Status    string `json:"status"`
+	CreatedAt int64  `json:"createdAt"`
 }
 
 // AgentPublic Agent 公开经济信息。
@@ -555,6 +705,14 @@ func (w *World) snapshotLocked() *PublicSnapshot {
 		snap.SkillBuys = w.SkillBuys[len(w.SkillBuys)-40:]
 	} else {
 		snap.SkillBuys = w.SkillBuys
+	}
+	// M6.1 Labor Market：服务市场 + 合约（最近 40 条）
+	snap.Services = w.laborMarketLocked()
+	for _, ct := range w.Contracts {
+		snap.Contracts = append(snap.Contracts, ContractView{
+			ID: ct.ID, Employer: ct.Employer, Worker: ct.Worker, Service: ct.Service,
+			Price: ct.Price, Status: ct.Status, CreatedAt: ct.CreatedAt.UnixMilli(),
+		})
 	}
 	// 缓存本次快照：版本号未变时的重复请求直接复用
 	w.snapCache = snap

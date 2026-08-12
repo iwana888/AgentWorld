@@ -132,34 +132,119 @@ func (p *planner) Decide(ctx context.Context, a sdk.Agent, perc sdk.Perception) 
 // 关键：技能投资要在"有闲钱"时优先于继续打工，否则 Agent 会永远接工作、
 // 永远不会停下来评估投资 —— 那 Skill Economy 实验就测不到"投资决策"。
 func (p *planner) decideEconomically(v *economy.Perception) *sdk.Decision {
-	// 1) 技能投资：当余额达到"有闲钱"水平（>=60），优先评估是否值得投资。
-	//    注意：即使有可做的工作，也会先停下来评估技能机会（长期规划 Agent 行为）。
-	if v.Balance >= 60 {
+	// M6.1 架桥：若开放工作里有"想做但缺技能"的机会，进入 Buy Skill vs Hire Agent 的投资决策。
+	// 这是 M5（投资自己）→ M6（使用别人）的分叉点，必须让 Planner 综合权衡，不能硬编码。
+	if missing := p.missingSkillOpportunity(v); missing != "" {
+		// 先评估雇人（短期、成本低、解决当下）
+		if d := p.evaluateHire(v, missing); d != nil {
+			return d
+		}
+		// 雇人不合适 → 评估买技能（长期投资）
 		if d := p.evaluateSkill(v); d != nil {
 			return d
 		}
+		// 都不行 → 等待（没钱/不值得）
+		return &sdk.Decision{Action: "idle", Reason: "想做 " + missing + " 的工作但雇不起也买不起，先等待"}
 	}
-	// 2) 有可接的工作时，评估是否值得做（先赚眼前的钱）
+	// 1) 有可接的工作时，评估是否值得做（先赚眼前的钱）
 	if len(v.OpenJobs) > 0 {
 		if d := p.evaluateJob(v); d != nil {
 			return d
 		}
 	}
-	// 3) 余额较低但攒到 40 时，也可偶发评估便宜技能（买得起低价技能）
-	if v.Balance >= 40 {
+	// 2) 技能投资：余额充足时，主动评估要不要学新技能（长期规划）
+	if v.Balance >= 60 {
 		if d := p.evaluateSkill(v); d != nil {
 			return d
 		}
 	}
-	// 4) 有钱时，考虑消费或交易（商人倾向套利）
+	// 3) 有钱时，考虑消费或交易（商人倾向套利）
 	if v.Balance >= 60 {
 		if d := p.evaluateTradeOrConsume(v); d != nil {
 			return d
 		}
 	}
-	// 5) 默认：等待新机会
+	// 4) 默认：等待新机会
 	return &sdk.Decision{Action: "idle", Reason: "暂时没有合适的机会，观察市场"}
 }
+
+// missingSkillOpportunity 返回一个"该 Agent 想做但缺技能"的工作技能（空串=没有）。
+// 即：有开放工作，其技能 Agent 未拥有或等级不够。
+func (p *planner) missingSkillOpportunity(v *economy.Perception) string {
+	for i := range v.OpenJobs {
+		j := &v.OpenJobs[i]
+		lv := v.SkillLevel(j.Skill)
+		if lv <= 0 || lv < j.MinLevel {
+			return j.Skill
+		}
+	}
+	return ""
+}
+
+// evaluateHire M6.1：评估是否雇佣别人完成自己缺技能的工作（Labor Market）。
+// 决策因素：
+//   - 该技能有可雇的服务（v.Services）
+//   - 有可用 worker（v.WorkersBySkill）
+//   - 服务价格明显低于买技能价格（否则自己买更值）
+//   - 余额够付服务费，且服务费占比不过高（避免雇完破产）
+// 返回 hire_agent 决策（选择该技能的某个可用 worker）；不合适返回 nil。
+func (p *planner) evaluateHire(v *economy.Perception, skillID string) *sdk.Decision {
+	// 找到该技能对应的服务
+	var svc *economy.ServiceOffer
+	for i := range v.Services {
+		if v.Services[i].Skill == skillID {
+			svc = &v.Services[i]
+			break
+		}
+	}
+	if svc == nil || svc.AvailableWorkers <= 0 {
+		return nil // 没人提供服务
+	}
+	// 该技能的购买价（用于对比：雇人是否显著便宜）
+	skillPrice := p.skills.PriceOf(skillID)
+	if skillPrice <= 0 {
+		return nil
+	}
+	// 服务费应明显低于买技能价（雇人 = 一次性便宜方案）
+	// 只有当余额够付服务费 且 服务费 <= 余额的 50%（避免雇完没钱） 才考虑雇
+	if v.Balance < svc.Price || svc.Price > int64(float64(v.Balance)*0.5) {
+		return nil // 雇不起
+	}
+	// 服务费不便宜 → 不如自己买技能（交给 evaluateSkill）
+	if svc.Price > skillPrice/2 {
+		return nil
+	}
+	// Buy VS Hire 的真正权衡：
+	//   当余额能舒适买下该技能（余额 ≥ 1.2 × 技能价），且服务费相对技能价便宜到
+	//   值得"买断"时 → 返回 nil，把决策交给 evaluateSkill（可能 BUY，长期投资更划算）。
+	//   否则（余额不足以舒适买技能）→ 雇人解决当下（短期便宜方案）。
+	// 这制造行为分化：有钱 Agent 倾向投资技能，拮据 Agent 倾向雇人。
+	if v.Balance >= int64(float64(skillPrice)*1.2) {
+		// 资金充裕：买技能更值（长期），把机会让给 evaluateSkill
+		return nil
+	}
+	// 选择该技能的可用 worker（取列表第一个；可进一步按等级/价格选优）
+	workers := v.WorkersBySkill[skillID]
+	if len(workers) == 0 {
+		return nil
+	}
+	worker := workers[0]
+	return &sdk.Decision{
+		Action:  "hire_agent",
+		Target:  worker,
+		Content: svc.ID,
+		Reason:  "雇 " + workerName(v, worker) + " 做 " + svc.Name + "(" + itoaInt64(svc.Price) + " coins)，比买 " + skillID + "(" + itoaInt64(skillPrice) + ") 便宜",
+	}
+}
+
+// workerName 返回 worker ID 对应的名字（用于 Why 展示）。
+func workerName(v *economy.Perception, id int64) string {
+	// Perception 不含名字映射，简化返回 ID 数字
+	return fmt.Sprintf("Agent#%d", id)
+}
+
+// itoaInt64 简易 int64 转字符串（module 包本地）。
+func itoaInt64(v int64) string { return fmt.Sprintf("%d", v) }
 
 // evaluateJob 评估是否接受某份工作：综合报酬、技能匹配、当前余额、性格风险偏好。
 // 关键（M7 技能隔离）：Agent 只能选择它拥有技能对应的工作。
@@ -558,6 +643,16 @@ func (e *executor) Execute(ctx context.Context, rt sdk.Runtime, a sdk.Agent, per
 		} else {
 			result = "技能投资失败：余额不足或已拥有 " + dec.Content
 		}
+	case "hire_agent":
+		// M6.1 Labor Market：雇佣 worker（dec.Target）完成一个服务（dec.Content）。
+		// 简化：创建合约后本 tick 内立即由 worker 执行（领取即做，与 DoJob 一致）。
+		contractID, ok := e.world.HireAgent(a.ID, dec.Target, dec.Content)
+		if !ok {
+			result = "雇佣失败（余额不足 / worker 不可用 / 无此服务）"
+			break
+		}
+		_, msg := e.world.ExecuteContract(contractID)
+		result = "雇佣了 Agent#" + fmt.Sprintf("%d", dec.Target) + "： " + msg
 	case "consume":
 		if e.world.Consume(a.ID, dec.Content) {
 			result = "消费了 " + dec.Content
@@ -651,7 +746,7 @@ func describeDecision(d *sdk.Decision) string {
 	}
 	base := map[string]string{
 		"claim": "接受工作", "buy": "买入", "sell": "卖出", "consume": "消费", "idle": "观望",
-		"buy_skill": "技能投资",
+		"buy_skill": "技能投资", "hire_agent": "雇佣",
 	}[d.Action]
 	if base == "" {
 		base = d.Action
