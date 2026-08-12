@@ -67,7 +67,7 @@ Agent + World + Need + Goal + Plan + Memory
 | **Hotel** | 业务 Agent + Tool Calling + MCP | 前台 Agent 办理入住时调用真实 PMS 发卡 |
 | **Game** | 第三方 SDK 扩展 | `examples/gameworld`：打怪升级世界（用 `sdk` 包写的） |
 | **GooseGame** | 信息隔离的社交推理世界 + 2D 游戏 UI | 8 个 Agent（6 鹅/1 鸭/1 中立）在 6 房间 2D 船舱里玩《鸭鹅杀》：隐藏身份、Belief/Relationship、会议投票、浏览器实时观察 — [README](worlds/goosegame/README.md) |
-| **Economy** | 资源约束下的自主行为 + Skill System + **技能市场（M5）** | 20 个 Agent 开局只拥有**本职业**一个技能；**技能市场按固定价格卖其他技能** — Agent 自主决定要不要拿自己的钱投资新技能，再用新技能赚钱。不同 Agent 产生**不同的经济策略**（有人买 Engineer、有人买 Doctor、有人坚持原职业、有人买错破产）— [README](worlds/economy/README.md) |
+| **Economy** | 资源约束下的自主行为 + Skill System + **技能市场（M5）** + **Agent 劳动力市场（M6）** | Agent 开局只有本职业技能；技能市场卖技能，**劳动力市场让 Agent 互相雇佣**（Service + Contract + Escrow 托管）。统一决策引擎权衡 **Buy Skill vs Hire Agent vs Wait** —— 最多 100 个 Agent 做出不同选择（买本职业技能/雇人/等待/破产），由职业、资金、人格驱动 — [README](worlds/economy/README.md) |
 
 ### 界面截图
 

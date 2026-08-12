@@ -65,7 +65,7 @@ Multiple agents autonomously live and cooperate inside one or more worlds, and c
 | **Hotel** | Business agents + tool calling + MCP | Front-desk agent issues real room keys via PMS on check-in |
 | **Game** | Third-party SDK extensibility | `examples/gameworld`: a level-up world written with the `sdk` package |
 | **GooseGame** | Info-isolated social deduction world + 2D game UI | 8 agents (6 goose / 1 duck / 1 dodo) play **Duck, Duck, Goose** on a 6-room 2D spaceship map: hidden identities, Belief & Relationship, meeting scenes, votes — watch it live in the browser — [README](worlds/goosegame/README_EN.md) |
-| **Economy** | Resource-constrained autonomy + Skill System + **Skill Marketplace (M5)** | 20 agents start with **only their own profession skill**; **the Skill Marketplace sells other skills at fixed prices** — agents autonomously decide whether to invest their own coins to buy a new skill, then earn from its jobs. Different agents produce **different economic strategies** (buy Engineer / buy Doctor / stay put / buy wrong & go bankrupt) — [README](worlds/economy/README_EN.md) |
+| **Economy** | Resource-constrained autonomy + Skill System + **Skill Marketplace (M5)** + **Agent Labor Market (M6)** | agents start with only their own profession skill; the Skill Marketplace sells skills, and a **Labor Market** lets agents **hire each other** (Service + Contract + Escrow). A unified decision engine weighs **Buy Skill vs Hire Agent vs Wait** — up to 100 agents make different choices (buy their profession's skill / hire others / wait / go bankrupt) driven by profession, capital & personality — [README](worlds/economy/README_EN.md) |
 
 ### Screenshots
 

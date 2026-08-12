@@ -8,10 +8,13 @@ AgentWorld 的第二个世界：验证一个更重要的问题——**当 Agent 
 
 **M5 Skill Economy MVP**：给技能加入**市场价格**，让 Agent 不只是"用已有技能工作"，而是**自主决定要不要花自己的钱去买新技能**（技能投资）。
 
+**M6 Agent Labor Market**：让 Agent 不只是"投资自己的能力"，更进一步——**学会使用其他 Agent 的能力**（雇佣 + 合约 + 托管），Buy Skill vs Hire Agent 成为真实的经济行为分叉。
+
 ## 核心问题
 
 > 把"钱"放进 AgentWorld 后，Agent 的行为会不会涌现出变化？
 > 更进一步（M5）：Agent 会不会拿自己辛苦赚的钱，去**投资新技能**？
+> 再进一步（M6）：Agent 会不会**雇别人**干活，而不是自己买技能？面对同一个机会，100 个 Agent 会不会做出不同选择？
 
 第一阶段目标：**20 Agent + 初始经济 + 10 种工作/商品 + 自动交易 + Observatory + Skill Economy（技能投资）**。
 
@@ -127,6 +130,129 @@ MVP 跑一次完整实验后，Observatory 能回答：
 产生**不同的经济策略**（有的买 Engineer、有的买 Doctor、有的坚持原职业、有的买错破产）——这才是值得研究的。
 
 ![技能市场 + 技能购买记录 + 投资回报](screenshots/03-skill-marketplace.png)
+
+## M5.1 Skill Economy Core — 等级门槛 + 收益倍率 + 稀缺性
+
+M5 建了"技能市场"，但技能的**等级维度**还没成为真正的经济资源。M5.1 补齐三块，让"技能等级"真正影响可做工作 / 成功率 / 收入：
+
+### 1. Job 技能等级门槛
+
+同一技能按等级分档，**等级越高能接的工作收益越高**（这是 M6 雇佣机制的前提）：
+
+| 技能 | Lv1 可做 | Lv3 可做 | Lv5 可做 |
+|---|---|---|---|
+| Engineer | Repair Machine 35 | Repair Reactor 60 | Engineering Project 100 |
+| Doctor | First Aid 30 | Medical Treatment 55 | Surgery 90 |
+| Courier | Deliver 10 / Collect 15 | — | Fleet Transport 30 |
+
+`DoJob` 检查门槛：**技能等级 < 工作 MinLevel → 直接做不了**（技能隔离的等级维度）。
+
+### 2. Skill Level → 收益倍率
+
+奖励 = 基础奖励 × `IncomeMultiplier(level)`（Lv1:1.0 → Lv3:1.5 → Lv5:2.2 → Lv7:3.0）。
+**升级技能本身成为投资**——同一份工作，等级越高赚得越多。
+
+```
+Engineer 收入：Lv1=35  Lv3=90  Lv5=220   ← 6 倍差距（回归测试验证）
+```
+
+### 3. 技能稀缺性统计
+
+`SkillOffer` 增加 `Owners / Demand / Scarcity`：
+- **Owners**：拥有该技能的 Agent 数（越少越稀缺）
+- **Demand**：该技能开放工作的总报酬（需求强度）
+- **Scarcity** = Demand / Owners
+
+注入感知 + 公开市场，`evaluateSkill` 对稀缺技能加分，让投资决策多一个维度。
+
+### M5.1 实验验证
+
+```
+Skill 稀缺性（100 Agent 某时刻）：
+  Doctor   owners=4  demand=265  scarcity=66.25  ← 极稀缺
+  Engineer owners=4  demand=160  scarcity=40     ← 稀缺
+  Farmer   owners=11 demand=0    scarcity=0       ← 过剩（无需求）
+```
+
+回归测试 `m51_test.go`（4 用例）：倍率表 / Engineer 三档工作 / 等级门槛 / 收入随等级增长。
+
+## M6.1 Agent Labor Market — 让 Agent 学会使用别人的能力
+
+M5 问"我该不该投资自己"，M6 问"**我该不该用别人的能力**"。
+
+### 数据模型
+
+- **Service**：可雇佣的服务（技能 / 最低等级 / **固定价格**，服务价 < 技能价，否则没人雇）
+- **AgentService**：拥有技能即自动能提供服务（无需额外注册）
+- **Contract**：雇佣合约（employer / worker / service / price / status）
+- **Escrow 托管**：雇主导出服务费锁进合约，**完成给 worker / 失败退回**（资金守恒）
+
+```
+Bob 需要 Repair Machine（缺 engineer）
+        │
+        ▼
+   Labor Market（Alice Lv5 ¥20 / Charlie Lv3 ¥15 / David Lv1 ¥8）
+        │
+        ▼
+  Planner 比较：Buy Engineer=100  vs  Hire Alice=20  vs  Wait=0
+        │
+        ▼
+      hire_agent(Alice) → Contract → Escrow 20 → Alice 执行 → Bob -20 / Alice +20
+```
+
+### hire_agent 感知与执行
+
+- `Perception` 注入 `Services`（服务市场）+ `WorkersBySkill`（可雇 worker）
+- `HireAgent`：校验余额 / worker 技能 / 等级 → 创建 Contract + Escrow 扣款
+- `ExecuteContract`：worker 按技能成功率执行，成功给 worker / 失败退回雇主
+
+## M6.2 Unified Economic Decision — Buy / Hire / Wait 统一评估
+
+核心改进：**取消 `余额 >= 1.2×价格` 的人工阈值**。Planner 对每个候选算统一评分，自主选择——不是我们替 Agent 写策略。
+
+```
+              Economic Decision
+                    │
+      ┌─────────────┼─────────────┐
+      ↓             ↓             ↓
+  Buy Skill     Hire Agent       Wait
+      │             │             │
+      └─────────────┼─────────────┘
+                    ↓
+              UnifiedScore（成本/收益/风险/未来价值/职业协同/人格）
+                    ↓
+                 Planner 选择
+                    ↓
+                 Action
+```
+
+每个候选都是 `EconomicOption`（Cost / Reward / Future / Risk / Score），关键评分维度：
+- **买得起 / 付得起** + 回收期 + 收入提升
+- **风险**（买完/雇完还剩多少）
+- **职业协同**（买本职业技能 +0.2，相邻 +0.08）—— 让不同职业的 Agent 产生不同投资偏好
+- **人格**（冒险者加成 / 稳健者保守）
+
+### 100 Agent 分化实验
+
+```
+ECO_AGENTS=100 跑 150s：
+
+Skill Buys（40 次，方向分化）：
+  farmer:15  courier:14  doctor:5  miner:3  chef:2  engineer:1
+  ← 农夫倾向买 farmer、信使买 courier，跨界投资少（职业协同生效）
+
+Contract Stats：total=2513  completed=1752  failed=761  volume=25578
+  ← 雇佣大量发生（缺技能的人雇人），失败机制真实
+
+财富分化：
+  Agent28(Chef) bal=9520   ← 多技能投资成为首富（复利/资本集中）
+  Agent60     bal=1882
+  Henry/Alice/Agent61 = 0  ← 破产（投资失败/经营不善）
+```
+
+**结论**：面对同一个经济机会，100 个 Agent 做出了不同选择——不同职业倾向买对应技能、有人大量雇人、有人破产、有人靠技能投资成为首富。**人格 / 职业 / 资金这些内部因素开始影响经济行为**。
+
+> 支持大规模实验：`ECO_AGENTS` 环境变量（默认 20，可设 100/200），超出 20 的人设由职业/性格/资金池循环生成。
 
 ## Skill System（M7）
 
@@ -245,22 +371,25 @@ cd worlds/economy/web && npm install && npm run dev
 
 | 接口 | 说明 |
 |---|---|
-| `GET /api/game` | 经济快照（Agent 资产/价格/开放工作/最近交易/总财富/**技能市场**/**技能购买记录**） |
+| `GET /api/game` | 经济快照（Agent 资产/价格/开放工作/最近交易/总财富/**技能市场**/**技能购买记录**/**服务市场**/**合约统计**） |
 | `GET /api/agents/{id}` | Agent 深度状态（余额/赚花/目标/性格/技能/为什么/库存/**技能投资回报**） |
 | `GET /api/events` | 最近事件 |
 | `GET /api/events/stream` | SSE 实时交易流 |
+
+> 环境变量：`ECO_AGENTS`（Agent 数量，默认 20，可设 100/200 跑大规模实验）。
 
 ## 目录
 
 ```
 worlds/economy/
-├── cmd/economy/main.go     # 独立入口（:19100）
+├── cmd/economy/main.go     # 独立入口（:19100，支持 ECO_AGENTS 扩展）
 ├── economy/
-│   ├── world.go            # 世界状态：20 Agent + Skills + 初始资产（M5 只给本职业技能）
-│   ├── economy.go          # 经济操作：工作/买卖/消费/资金转移/买技能(BuySkill)
-│   ├── perception.go       # 经济状态 + 技能 + 技能市场(SkillOffer)注入感知
+│   ├── world.go            # 世界状态：N Agent + Skills + 初始资产（M5 只给本职业技能）
+│   │                       #         + M5.1 等级门槛 + M6.1 Service/Contract/Escrow
+│   ├── economy.go          # 经济操作：工作/买卖/消费/资金转移/买技能/雇人(HireAgent)/合约执行
+│   ├── perception.go       # 感知：技能市场(SkillOffer) + 劳动力市场(Services/WorkersBySkill) + 稀缺性
 │   ├── capabilities.go     # MCP 工具能力（mockBackend + Skill→Tool 映射 + buy_skill）
-├── module.go               # sdk.Module：Planner 技能隔离决策 + evaluate_skill + Executor + Why
+├── module.go               # Planner：技能隔离 + 统一经济决策(Buy/Hire/Wait) + evaluate_* + Executor + Why
 ├── server.go               # 经济观察 API + SSE + 内嵌前端（go:embed）
 ├── webstatic/              # 内嵌前端构建产物（//go:embed all:dist）
 ├── build.ps1               # 一键构建单文件 exe（前端内嵌）
