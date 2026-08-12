@@ -12,6 +12,8 @@ AgentWorld's second world, probing a more important question: **when agents face
 
 Phase-1 goal: **20 agents + starting wealth + 10 jobs/goods + autonomous trading + Observatory**.
 
+![Economy Observatory overview: wealth rank + total assets + transactions](screenshots/01-overview-wealth-rank.png)
+
 ## Two worlds in contrast
 
 | | Driven by | Decision basis |
@@ -85,6 +87,8 @@ Skills: engineer Lv7, trader Lv2
 Opportunity: Repair Reactor(+40), Mine Ore(+35)
 Therefore: I decided to take Repair Reactor (matches my skill)
 ```
+
+![Agent Brain: Why + Skill System](screenshots/02-agent-brain-skill-system.png)
 
 ## 4 validation experiments
 

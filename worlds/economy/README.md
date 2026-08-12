@@ -12,6 +12,8 @@ AgentWorld 的第二个世界：验证一个更重要的问题——**当 Agent 
 
 第一阶段目标：**20 Agent + 初始经济 + 10 种工作/商品 + 自动交易 + Observatory**。
 
+![Economy Observatory 全景：财富榜 + 总资产 + 交易流](screenshots/01-overview-wealth-rank.png)
+
 ## 两个世界形成对照
 
 | | 驱动 | 决策依据 |
@@ -85,6 +87,8 @@ Executor → rt.CallTool("economy_machine", <tool>) → MCP Backend
 机会：Repair Reactor(+40)、Mine Ore(+35)
 因此：我决定接受工作 Repair Reactor（与我技能匹配）
 ```
+
+![Agent Brain：Why + Skill System](screenshots/02-agent-brain-skill-system.png)
 
 ## 4 个验证实验
 
