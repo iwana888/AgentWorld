@@ -22,6 +22,9 @@ type Perception struct {
 	Inventory  map[string]int
 	// M7 技能系统：该 Agent 拥有的技能集合（决定它"看得见"哪些工具）
 	Skills      []skill.AgentSkill
+	// M5 Skill Economy：Skill Marketplace 感知 —— 市场上可买的技能及其价格。
+	// Agent 基于"当前能力 + 市场机会"评估是否做技能投资。
+	Market      []SkillOffer
 	// 市场机会
 	OpenJobs    []JobPublic
 	Prices      map[string]int64
@@ -29,6 +32,16 @@ type Perception struct {
 	WealthRank  int      // 财富排名（1=最富）
 	AgentCount  int
 	TotalWealth int64
+}
+
+// SkillOffer 市场上的一门技能（可购买）。
+type SkillOffer struct {
+	SkillID     string `json:"skillID"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Price       int64  `json:"price"`  // 固定购买价
+	Owned       bool   `json:"owned"`  // 该 Agent 是否已拥有
+	OwnLevel    int    `json:"ownLevel"` // 已有等级（0=未拥有）
 }
 
 // SkillLevel 返回该 Agent 对某技能的熟练度（0=未拥有）。
@@ -70,6 +83,17 @@ func (w *World) BuildPerception(agentID int64) *Perception {
 	// 价格
 	for name, price := range w.Prices {
 		p.Prices[name] = price
+	}
+	// M5 Skill Marketplace：注入可购买技能及其价格（固定），标记是否已拥有。
+	// "当前能力"（已拥有技能）与"市场机会"（可买技能）一起喂给 Planner。
+	if w.skills != nil {
+		for _, s := range w.skills.List() {
+			lv := a.SkillLevel(s.ID)
+			p.Market = append(p.Market, SkillOffer{
+				SkillID: s.ID, Name: s.Name, Description: s.Description,
+				Price: s.BasePrice, Owned: lv > 0, OwnLevel: lv,
+			})
+		}
 	}
 	// 财富排名
 	p.AgentCount = len(w.Agents)

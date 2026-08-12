@@ -15,11 +15,23 @@ import (
 )
 
 // Skill 一个技能定义：描述某类能力 + 它能用的工具集合。
+// M5 Skill Economy：增加 BasePrice（市场购买价，固定不变，用于"技能投资"实验）。
 type Skill struct {
 	ID          string   `json:"id"`          // 技能唯一 ID（如 "engineer"）
 	Name        string   `json:"name"`        // 显示名（如 "Engineer"）
 	Description string   `json:"description"` // 说明
 	Tools       []string `json:"tools"`       // 该技能能调用的 MCP Tool 名（决定可用性）
+	BasePrice   int64    `json:"basePrice"`   // 在市场购买该技能的价格（coins，固定）
+}
+
+// PriceOf 返回某技能的市场价格（未注册/未定价返回 0）。
+func (r *Registry) PriceOf(skillID string) int64 {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if s, ok := r.skills[skillID]; ok {
+		return s.BasePrice
+	}
+	return 0
 }
 
 // AgentSkill 一个 Agent 对某技能的掌握（技能 + 等级共存）。

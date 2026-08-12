@@ -6,11 +6,14 @@ AgentWorld 的第二个世界：验证一个更重要的问题——**当 Agent 
 
 20 个 Agent（工程师/农民/商人/信使/医生/矿工/厨师）在同一个经济世界里生产、交易、赚钱、消费，并基于 **Skill System** 自主选择自己"会做"的工作。
 
+**M5 Skill Economy MVP**：给技能加入**市场价格**，让 Agent 不只是"用已有技能工作"，而是**自主决定要不要花自己的钱去买新技能**（技能投资）。
+
 ## 核心问题
 
 > 把"钱"放进 AgentWorld 后，Agent 的行为会不会涌现出变化？
+> 更进一步（M5）：Agent 会不会拿自己辛苦赚的钱，去**投资新技能**？
 
-第一阶段目标：**20 Agent + 初始经济 + 10 种工作/商品 + 自动交易 + Observatory**。
+第一阶段目标：**20 Agent + 初始经济 + 10 种工作/商品 + 自动交易 + Observatory + Skill Economy（技能投资）**。
 
 ![Economy Observatory 全景：财富榜 + 总资产 + 交易流](screenshots/01-overview-wealth-rank.png)
 
@@ -22,6 +25,108 @@ AgentWorld 的第二个世界：验证一个更重要的问题——**当 Agent 
 | **Economy World** | 资源与财富 | 余额 + 市场价格 + 技能 + 工作机会 |
 
 同一个 AgentWorld Runtime 驱动两者——都有 Why + DecisionRecord + Observatory。
+
+## M5 Skill Economy MVP — 技能市场
+
+把技能变成"可投资的资产"：Agent 开局只拥有**本职业技能**，想学会其他技能，必须花钱去 **Skill Marketplace** 买。
+
+### 关键改造：defaultSkills 只给本职业
+
+> 这是 M5 最重要的一刀。M7 时代 Agent 初始拥有全部技能（本职业 Lv7 + 其余 Lv2），
+> 那样 Agent **根本没有"投资能力"的需求**。M5 改为只拥有本职业技能 Lv3，其余技能 ❌ 不拥有，
+> 想赚更多钱就必须自己决定"要不要买、买哪个"。
+
+```
+Courier Agent
+├── courier Lv3          # 唯一初始技能
+├── engineer ❌           # 想修机器 → 得花 100 coins 去市场买
+├── doctor   ❌
+└── miner    ❌
+```
+
+### 固定技能价格（第一版不波动）
+
+价格依据"收益潜力"设计（能赚越多越贵），这样测的是 **Agent 会不会做技能投资**，而不是适应价格波动：
+
+| 技能 | 价格(coins) | 对应工作收益参考 |
+|---|---|---|
+| Courier | 40 | Collect Data 15 / Deliver Package 10 |
+| Farmer | 50 | Harvest Crops 20 |
+| Trader | 60 | 套利（无固定工作） |
+| Chef | 60 | Cook Meal 14 |
+| Miner | 80 | Mine Ore 35 |
+| Engineer | 100 | Repair Reactor 40 |
+| Doctor | 120 | Medical Treatment 50 |
+
+### 决策链路：市场感知 → 经济评估 → 投资决策
+
+Planner **不硬编码"买 Engineer"**，而是通过统一的 `evaluate_skill` 得到**结构化结果**再决定：
+
+```
+Skill Marketplace (固定价格)
+        │
+        ▼
+ Market Perception（当前能力 + 市场机会）
+        │
+┌───────┴────────┐
+当前能力         市场机会
+└───────┬────────┘
+        ▼
+    evaluate_skill       ← 统一评估函数（结构化输出）
+        │
+   ┌────┴────┐
+  不购买      购买
+   │         │
+继续工作    buy_skill
+             │
+             ▼
+          获得新技能(Lv1)
+             │
+             ▼
+        新 Job 出现
+             │
+             ▼
+          新收入（随熟练度升级）
+             │
+             ▼
+          下一轮决策
+```
+
+`evaluate_skill` 返回结构（类似 `evaluate_job` / `evaluate_trade`，让 Runtime 是决策系统而非一堆 if）：
+
+```
+Skill: Engineer
+Price: 100
+Current Balance: 135
+Current Income: 13/job
+Expected Additional Income: +27/job
+Payback: ~3 jobs
+Investment Risk: Medium
+Recommendation: BUY / NOT_BUY
+```
+
+评估维度：**买得起吗**（余额 ≥ 价格）、**值不值**（新技能收益潜力 vs 当前收入提升）、
+**风险**（买完还剩多少钱，是否破产风险）、**回收期**（几单回本）、**性格**（冒险 vs 稳健）。
+
+### 技能熟练度演化
+
+买了新技能后 **Lv1 起步**，成功完成该类工作会升级（做得多 → 越熟练 → 成功率/收益越高）。
+所以"投资 → 需要时间回本 → 收益逐渐显现"，买了技能但没对应工作、或买错技能的 Agent 会亏钱。
+
+### 实验验收（Observatory 能回答）
+
+MVP 跑一次完整实验后，Observatory 能回答：
+
+- **谁买了技能？**（Skill Marketplace 面板）
+- **谁没买？为什么？**（Inspector 的"技能市场"感知）
+- **买了以后赚了多少？**（投资回报面板：投入/技能赚/净回报）
+- **谁买错了？谁投资成功？**（净回报为负 = 买错；净回报 ≥ 投入 = 成功）
+- **哪个技能最有价值/最稀缺？**（购买记录流统计）
+
+理想结果不是所有 Agent 都学会"正确答案"，而是不同 Agent 在**有限信息、有限资金、不同性格**下
+产生**不同的经济策略**（有的买 Engineer、有的买 Doctor、有的坚持原职业、有的买错破产）——这才是值得研究的。
+
+![技能市场 + 技能购买记录 + 投资回报](screenshots/03-skill-marketplace.png)
 
 ## Skill System（M7）
 
@@ -113,8 +218,8 @@ cd worlds/economy/web && npm install && npm run dev
 
 | 接口 | 说明 |
 |---|---|
-| `GET /api/game` | 经济快照（Agent 资产/价格/开放工作/最近交易/总财富） |
-| `GET /api/agents/{id}` | Agent 深度状态（余额/赚花/目标/性格/技能/为什么/库存） |
+| `GET /api/game` | 经济快照（Agent 资产/价格/开放工作/最近交易/总财富/**技能市场**/**技能购买记录**） |
+| `GET /api/agents/{id}` | Agent 深度状态（余额/赚花/目标/性格/技能/为什么/库存/**技能投资回报**） |
 | `GET /api/events` | 最近事件 |
 | `GET /api/events/stream` | SSE 实时交易流 |
 
@@ -124,13 +229,13 @@ cd worlds/economy/web && npm install && npm run dev
 worlds/economy/
 ├── cmd/economy/main.go     # 独立入口（:19100）
 ├── economy/
-│   ├── world.go            # 世界状态：20 Agent + Skills + 初始资产
-│   ├── economy.go          # 经济操作：工作/买卖/消费/资金转移
-│   ├── perception.go       # 经济状态 + 技能注入感知
-│   ├── capabilities.go     # MCP 工具能力（mockBackend + Skill→Tool 映射）
-├── module.go               # sdk.Module：Planner 技能隔离决策 + Executor + Why
+│   ├── world.go            # 世界状态：20 Agent + Skills + 初始资产（M5 只给本职业技能）
+│   ├── economy.go          # 经济操作：工作/买卖/消费/资金转移/买技能(BuySkill)
+│   ├── perception.go       # 经济状态 + 技能 + 技能市场(SkillOffer)注入感知
+│   ├── capabilities.go     # MCP 工具能力（mockBackend + Skill→Tool 映射 + buy_skill）
+├── module.go               # sdk.Module：Planner 技能隔离决策 + evaluate_skill + Executor + Why
 ├── server.go               # 经济观察 API + SSE
-└── web/                    # 经济观察台（Vue3 + Vite）
+└── web/                    # 经济观察台（Vue3 + Vite，含 SkillMarket 面板）
 ```
 
 ## Skill 基础设施（可复用）

@@ -41,6 +41,9 @@ type Agent struct {
 	TotalEarned  int64             // 累计赚取（统计）
 	TotalSpent   int64             // 累计花费（统计）
 	LastTradeAt  time.Time         // 上次交易时间（避免连续刷）
+	// M5 Skill Economy 实验指标：技能投资回报
+	SkillInvested int64 // 技能投资累计花费（买技能花的钱）
+	SkillEarned   int64 // 通过技能工作累计赚的钱（投资收益）
 }
 
 // SkillLevel 返回 Agent 对某技能的熟练度（0=未拥有）。
@@ -51,6 +54,17 @@ func (a *Agent) SkillLevel(skillID string) int {
 // HasSkill 返回 Agent 是否拥有某技能。
 func (a *Agent) HasSkill(skillID string) bool {
 	return a.SkillLevel(skillID) > 0
+}
+
+// UpgradeSkill 成功完成某技能对应工作后升级该技能（上限 7，M5 技能熟练度演化）。
+// 调用方需持锁（通常在 DoJob 内调用）。
+func (a *Agent) UpgradeSkill(skillID string) {
+	for i := range a.Skills {
+		if a.Skills[i].SkillID == skillID && a.Skills[i].Level < 7 {
+			a.Skills[i].Level++
+			return
+		}
+	}
 }
 
 // ---- 市场 / 商品 ----
@@ -95,10 +109,24 @@ type World struct {
 	Jobs       []*Job
 	TxLog      []Transaction // 所有资金流动
 	Prices     map[string]int64 // 当前商品价格
+	skills     *skill.Registry   // 技能市场（M5：技能定义 + 固定价格）
+	// M5 实验观测：技能购买记录（谁买/花多少/买的什么）+ 投资收益统计
+	SkillBuys  []SkillBuy
 	nextJobID  int64
 	nextTxID   int64
 	round      int
 	startedAt  time.Time
+}
+
+// SkillBuy 一次技能购买记录（Observatory 回答"谁买了技能"）。
+type SkillBuy struct {
+	AgentID   int64     `json:"agentID"`
+	Name      string    `json:"name"`
+	SkillID   string    `json:"skillID"`
+	Price     int64     `json:"price"`
+	BalanceAt int64     `json:"balanceAt"` // 购买时余额
+	Round     int       `json:"round"`
+	Time      time.Time `json:"time"`
 }
 
 // ---- 初始 20 个 Agent（职业 + 初始资产 + 性格）----
@@ -131,12 +159,15 @@ var InitialProfiles = []struct {
 }
 
 // NewWorld 创建经济世界，注入 20 个 Agent 的初始状态。
-func NewWorld(agentIDs []int64, names []string, personalities []string, obs *goose.Observatory) *World {
+// skills 是技能市场注册表（M5：含技能定义与固定价格），供 Agent 做技能投资。
+func NewWorld(agentIDs []int64, names []string, personalities []string, obs *goose.Observatory, skills *skill.Registry) *World {
 	w := &World{
 		obs:      obs,
 		Agents:   map[int64]*Agent{},
 		Goods:    map[string]*Goods{},
 		Prices:   map[string]int64{},
+		skills:   skills,
+		SkillBuys: []SkillBuy{},
 		startedAt: time.Now(),
 	}
 	// 初始 20 个 Agent
@@ -191,39 +222,38 @@ func initMarket(w *World) {
 	}
 }
 
-// defaultSkills 根据职业初始化 Agent 的技能集合（M7：技能 + 等级共存）。
-// 每个 Agent 拥有多个技能：本职业等级 7，其余职业等级 2（辅助）。
-// 这让"目标影响技能选择"实验成为可能（如 Engineer 同时有 engineer 和 trader）。
+// defaultSkills 初始化 Agent 的技能集合（M5 Skill Economy MVP）。
+// 关键改动（M5）：不再让 Agent 初始拥有全部技能，而是**只拥有本职业技能 Lv3**，
+// 其他职业技能一律不拥有（❌）。
+//
+// 这样制造"投资能力"的需求：
+//   Courier 只会送快递（courier 技能），想修机器（engineer）就得去 Skill Marketplace 花钱买。
+//   买不买、买哪个、何时买 —— 由 Agent 自主决定（evaluate_skill）。
 func defaultSkills(profession string) []skill.AgentSkill {
-	all := []string{"engineer", "farmer", "trader", "courier", "doctor", "miner", "chef"}
-	out := make([]skill.AgentSkill, 0, len(all))
-	for _, id := range all {
-		level := 2
-		if skillIDToProfession(id) == profession {
-			level = 7
-		}
-		out = append(out, skill.AgentSkill{SkillID: id, Level: level})
+	own := skillIDToProfessionID(profession)
+	if own == "" {
+		return nil
 	}
-	return out
+	return []skill.AgentSkill{{SkillID: own, Level: 3}}
 }
 
-// skillIDToProfession 把技能 ID 映射回职业名（用于判断本职业技能）。
-func skillIDToProfession(id string) string {
-	switch id {
-	case "engineer":
-		return "Engineer"
-	case "farmer":
-		return "Farmer"
-	case "trader":
-		return "Trader"
-	case "courier":
-		return "Courier"
-	case "doctor":
-		return "Doctor"
-	case "miner":
-		return "Miner"
-	case "chef":
-		return "Chef"
+// skillIDToProfessionID 把职业名映射回技能 ID（用于判断本职业技能）。
+func skillIDToProfessionID(profession string) string {
+	switch profession {
+	case "Engineer":
+		return "engineer"
+	case "Farmer":
+		return "farmer"
+	case "Trader":
+		return "trader"
+	case "Courier":
+		return "courier"
+	case "Doctor":
+		return "doctor"
+	case "Miner":
+		return "miner"
+	case "Chef":
+		return "chef"
 	}
 	return ""
 }

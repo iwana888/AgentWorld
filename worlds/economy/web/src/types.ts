@@ -6,6 +6,7 @@ export interface AgentPublic {
   profession: string
   balance: number
   inventory: Record<string, number>
+  skills: AgentSkill[]
 }
 
 export interface Transaction {
@@ -25,6 +26,25 @@ export interface JobPublic {
   skill: string
 }
 
+export interface SkillOffer {
+  skillID: string
+  name: string
+  description: string
+  price: number
+  owned: boolean
+  ownLevel: number
+}
+
+export interface SkillBuy {
+  agentID: number
+  name: string
+  skillID: string
+  price: number
+  balanceAt: number
+  round: number
+  time: string
+}
+
 export interface GameSnapshot {
   round: number
   agents: AgentPublic[]
@@ -32,6 +52,8 @@ export interface GameSnapshot {
   openJobs: JobPublic[]
   recentTx: Transaction[]
   totalWealth: number
+  skillMarket: SkillOffer[]
+  skillBuys: SkillBuy[]
 }
 
 export interface AgentSkill {
@@ -53,6 +75,18 @@ export interface InspectorData {
   lastAction: string
   lastWhy: string
   skills: AgentSkill[]
+  skillInvested: number
+  skillEarned: number
+  skillReturn: number
+}
+
+// 技能 emoji / 标签
+export function skillEmoji(skillID: string): string {
+  const map: Record<string, string> = {
+    engineer: '⚙️', farmer: '🌾', trader: '💼', courier: '📦',
+    doctor: '💊', miner: '⛏️', chef: '🍳',
+  }
+  return map[skillID] || '🎓'
 }
 
 export interface ObsEvent {

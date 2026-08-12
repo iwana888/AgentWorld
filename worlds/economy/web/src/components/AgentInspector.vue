@@ -72,6 +72,25 @@
           </div>
         </div>
       </div>
+
+      <div class="sec" v-if="inspector.skillInvested > 0">
+        <div class="sec-label">📈 技能投资回报（M5 Skill Economy）</div>
+        <div class="inv-metrics">
+          <div class="inv-cell">
+            <div class="inv-label">投入</div>
+            <div class="inv-val red">{{ inspector.skillInvested.toLocaleString() }}</div>
+          </div>
+          <div class="inv-cell">
+            <div class="inv-label">技能赚</div>
+            <div class="inv-val green">{{ inspector.skillEarned.toLocaleString() }}</div>
+          </div>
+          <div class="inv-cell">
+            <div class="inv-label">净回报</div>
+            <div class="inv-val" :class="invReturnClass">{{ inspector.skillReturn.toLocaleString() }}</div>
+          </div>
+        </div>
+        <div class="inv-verdict" :class="invVerdictClass">{{ invVerdict }}</div>
+      </div>
     </div>
   </el-card>
 </template>
@@ -109,6 +128,27 @@ const whyParsed = computed(() => {
 })
 const invList = computed(() => Object.entries(inspector.value?.inventory || {}).filter(([, q]) => q > 0))
 const skills = computed(() => (inspector.value?.skills || []).filter(s => s.level > 0).sort((a, b) => b.level - a.level))
+
+const invReturnClass = computed(() => {
+  const r = inspector.value?.skillReturn ?? 0
+  return r > 0 ? 'green' : r < 0 ? 'red' : ''
+})
+const invVerdict = computed(() => {
+  const invested = inspector.value?.skillInvested ?? 0
+  const ret = inspector.value?.skillReturn ?? 0
+  if (invested <= 0) return ''
+  if (ret >= invested) return '✅ 投资成功：技能投入已回本并盈利'
+  if (ret > 0) return '⏳ 投资回收中：已部分回本'
+  return '⚠️ 投资亏损：尚未回本（技能投资有风险）'
+})
+const invVerdictClass = computed(() => {
+  const invested = inspector.value?.skillInvested ?? 0
+  const ret = inspector.value?.skillReturn ?? 0
+  if (invested <= 0) return ''
+  if (ret >= invested) return 'good'
+  if (ret > 0) return 'mid'
+  return 'bad'
+})
 
 function emoji(p: string) { return profEmoji(p) }
 function skillPct(level: number) { return Math.round((level / 7) * 100) }
@@ -153,4 +193,12 @@ function skillColor(level: number) {
 .skill-lv { color: #7cc3ff; font-weight: 700; margin-left: 3px; }
 .skill-bar { flex: 1; }
 .no-data { color: #5a6278; font-size: 12px; }
+.inv-metrics { display: flex; gap: 6px; }
+.inv-cell { flex: 1; background: #10162a; border: 1px solid #232f4a; border-radius: 6px; padding: 6px; text-align: center; }
+.inv-label { font-size: 10px; color: #7a86a6; }
+.inv-val { font-size: 14px; font-weight: 800; margin-top: 2px; }
+.inv-verdict { margin-top: 6px; font-size: 11px; padding: 5px 8px; border-radius: 6px; }
+.inv-verdict.good { color: #9ee6b0; background: #14341f; }
+.inv-verdict.mid { color: #e5c07b; background: #332a14; }
+.inv-verdict.bad { color: #ff7b72; background: #3a1c1c; }
 </style>

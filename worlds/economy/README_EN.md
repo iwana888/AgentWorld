@@ -23,6 +23,105 @@ Phase-1 goal: **20 agents + starting wealth + 10 jobs/goods + autonomous trading
 
 Both run on the same AgentWorld Runtime — both have Why + DecisionRecord + Observatory.
 
+## M5 Skill Economy MVP — the skill market
+
+Turn skills into **investable assets**: agents start with **only their own profession skill**; to learn any other skill they must spend their own coins at the **Skill Marketplace**.
+
+### Key change: `defaultSkills` grants only the profession skill
+
+> This is the most important cut of M5. In M7 an agent started with all skills (own Lv7 + rest Lv2), which left **no reason to invest in new capabilities**. M5 grants only the own-profession skill at Lv3, so earning more means deciding "should I buy a skill, and which one?"
+
+```
+Courier Agent
+├── courier Lv3          # the only starting skill
+├── engineer ❌           # wants to repair → must spend 100 coins at the market
+├── doctor   ❌
+└── miner    ❌
+```
+
+### Fixed skill prices (no volatility in v1)
+
+Prices follow "earning potential" (higher earners cost more), so we measure **whether agents do skill investment**, not whether they adapt to price swings:
+
+| Skill | Price(coins) | Reference job reward |
+|---|---|---|
+| Courier | 40 | Collect Data 15 / Deliver Package 10 |
+| Farmer | 50 | Harvest Crops 20 |
+| Trader | 60 | arbitrage (no fixed job) |
+| Chef | 60 | Cook Meal 14 |
+| Miner | 80 | Mine Ore 35 |
+| Engineer | 100 | Repair Reactor 40 |
+| Doctor | 120 | Medical Treatment 50 |
+
+### Decision pipeline: market perception → economic evaluation → investment decision
+
+The Planner does **not hardcode "buy Engineer"**. It gets a **structured result** from a unified `evaluate_skill`, then decides:
+
+```
+Skill Marketplace (fixed prices)
+        │
+        ▼
+ Market Perception (current capabilities + market opportunities)
+        │
+┌───────┴────────┐
+capabilities     opportunities
+└───────┬────────┘
+        ▼
+    evaluate_skill       ← unified evaluation (structured output)
+        │
+   ┌────┴────┐
+ NOT_BUY      BUY
+   │         │
+ keep work   buy_skill
+             │
+             ▼
+        new skill (Lv1)
+             │
+             ▼
+        new jobs appear
+             │
+             ▼
+       new income (levels up)
+             │
+             ▼
+        next decision
+```
+
+`evaluate_skill` returns a structure (like `evaluate_job` / `evaluate_trade` — makes the runtime a decision system, not a pile of ifs):
+
+```
+Skill: Engineer
+Price: 100
+Current Balance: 135
+Current Income: 13/job
+Expected Additional Income: +27/job
+Payback: ~3 jobs
+Investment Risk: Medium
+Recommendation: BUY / NOT_BUY
+```
+
+Evaluation dimensions: **can afford** (balance ≥ price), **is it worth it** (new-skill earning potential vs current income lift),
+**risk** (how much is left after buying, bankruptcy risk), **payback** (jobs to break even), **personality** (adventurous vs cautious).
+
+### Skill proficiency evolution
+
+A purchased skill starts at **Lv1** and levels up by completing that class of job (practice → proficiency → higher success/income).
+So "invest → needs time to break even → returns appear gradually". Agents that buy a skill with no matching jobs, or buy the wrong skill, lose money.
+
+### Experiment acceptance (what the Observatory answers)
+
+After one full run, the Observatory answers:
+
+- **Who bought skills?** (Skill Marketplace panel)
+- **Who didn't, and why?** (Inspector "skill market" perception)
+- **How much did buyers earn?** (investment return panel: invested / skill-earned / net return)
+- **Who bought wrong / who invested well?** (negative net return = wrong; net ≥ invested = success)
+- **Which skill is most valuable / scarcest?** (purchase-feed statistics)
+
+The ideal outcome is **not** everyone learning the "right answer". It's different agents, under **limited info, limited funds, different personalities**, producing **different economic strategies** (some buy Engineer, some buy Doctor, some stay put, some buy wrong and go bankrupt) — that is the real thing worth studying.
+
+![Skill marketplace + purchase feed + investment return](screenshots/03-skill-marketplace.png)
+
 ## Skill System (M7)
 
 A skill is an agent's **capability set**, deciding whether the agent can use a tool:

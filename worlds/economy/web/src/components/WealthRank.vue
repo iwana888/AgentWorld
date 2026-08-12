@@ -12,6 +12,7 @@
         <span class="rank-prof">{{ a.profession }}</span>
         <el-progress :percentage="wealthPct(a.balance)" :stroke-width="6" :show-text="false"
           class="rank-bar" :color="barColor(i)" />
+        <span v-if="skillCount(a) > 1" class="rank-skills" :title="skillNames(a)">🎓×{{ skillCount(a) }}</span>
         <span class="rank-bal">{{ a.balance.toLocaleString() }}</span>
       </div>
     </div>
@@ -34,6 +35,10 @@ function barColor(i: number) {
   return ['#ffd166', '#e5c07b', '#b07ce0'][i] || '#3d5278'
 }
 function emoji(p: string) { return profEmoji(p) }
+function skillCount(a: AgentPublic) { return (a.skills || []).filter(s => s.level > 0).length }
+function skillNames(a: AgentPublic) {
+  return (a.skills || []).filter(s => s.level > 0).map(s => `${s.skillID} Lv${s.level}`).join(', ')
+}
 </script>
 
 <style scoped>
@@ -50,5 +55,6 @@ function emoji(p: string) { return profEmoji(p) }
 .rank-name { color: #c6d0e8; font-size: 13px; font-weight: 600; width: 56px; flex-shrink: 0; }
 .rank-prof { color: #7a86a6; font-size: 11px; width: 52px; flex-shrink: 0; }
 .rank-bar { flex: 1; }
+.rank-skills { color: #b07ce0; font-size: 11px; flex-shrink: 0; }
 .rank-bal { color: #ffd166; font-size: 13px; font-weight: 700; width: 60px; text-align: right; flex-shrink: 0; font-variant-numeric: tabular-nums; }
 </style>

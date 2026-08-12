@@ -10,6 +10,8 @@ export function useGame() {
     openJobs: [],
     recentTx: [],
     totalWealth: 0,
+    skillMarket: [],
+    skillBuys: [],
   })
   const txStream = ref<ObsEvent[]>([])   // 实时交易流（SSE）
   const connected = ref(false)
@@ -33,6 +35,8 @@ export function useGame() {
     snapshot.openJobs = data.openJobs || []
     snapshot.recentTx = data.recentTx || []
     snapshot.totalWealth = data.totalWealth
+    snapshot.skillMarket = data.skillMarket || []
+    snapshot.skillBuys = data.skillBuys || []
   }
 
   function connect() {
@@ -55,7 +59,7 @@ export function useGame() {
     txStream.value.push(ev)
     if (txStream.value.length > 200) txStream.value.splice(0, txStream.value.length - 200)
     // 某些事件后刷新快照（交易/工作会让余额/价格变化）
-    if (['tx', 'job.done', 'trade.buy', 'trade.sell'].includes(ev.type)) {
+    if (['tx', 'job.done', 'trade.buy', 'trade.sell', 'skill.buy'].includes(ev.type)) {
       // 节流：避免频繁拉快照
       if (!snapshotUpdating) {
         snapshotUpdating = true

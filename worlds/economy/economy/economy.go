@@ -11,6 +11,7 @@ import (
 	"math/rand"
 	"time"
 
+	"agentworld/internal/skill"
 	"agentworld/worlds/goosegame/goose"
 )
 
@@ -97,6 +98,13 @@ func (w *World) DoJob(agentID, jobID int64) (int64, string) {
 			if success {
 				j.Status = "done"
 				w.transferLocked(0, agentID, j.Reward, "job-reward", j.Title)
+				// M5：累加技能投资收益 + 技能熟练度升级（做得多 → 越熟练 → 成功率/收益越高）。
+				// 这让"购买新技能后需要做该类工作逐渐熟练"成为真实过程：
+				// 买了技能 → 做该类工作 → 升级 → 收入增长（投资回报显现）。
+				if a, ok := w.Agents[agentID]; ok {
+					a.SkillEarned += j.Reward
+					a.UpgradeSkill(j.Skill)
+				}
 				w.obs.Publish("job.done", map[string]interface{}{
 					"job": j.ID, "title": j.Title, "agent": agentID, "reward": j.Reward,
 				})
@@ -183,6 +191,62 @@ func (w *World) Sell(agentID int64, goods string, qty int) bool {
 		"agent": agentID, "goods": goods, "qty": qty, "price": price,
 	})
 	return true
+}
+
+// BuySkill 购买一门技能（M5 Skill Economy MVP）。
+//   - 余额不足 / 已拥有 / 技能不存在 → 返回 false
+//   - 成功：扣款（transferLocked 到世界）+ 获得该技能（Level 1 起步）+ 记录 SkillBuy + 发布事件
+// 购买后该技能对应的新 Job 会自动出现在世界工作池里（SpawnJobs 会生成），
+// Agent 即可用它赚钱 → "购买 → 新 Job → 新收入 → 下一轮决策"。
+func (w *World) BuySkill(agentID int64, skillID string) bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	a, ok := w.Agents[agentID]
+	if !ok || a.SkillLevel(skillID) > 0 {
+		return false // 已拥有，不重复买
+	}
+	if w.skills == nil {
+		return false
+	}
+	s := w.skills.Get(skillID)
+	if s == nil || s.BasePrice <= 0 {
+		return false
+	}
+	if !w.transferLocked(agentID, 0, s.BasePrice, "skill-buy", "Skill: "+s.Name) {
+		return false // 余额不足
+	}
+	a.Skills = append(a.Skills, skill.AgentSkill{SkillID: skillID, Level: 1})
+	a.SkillInvested += s.BasePrice
+	w.SkillBuys = append(w.SkillBuys, SkillBuy{
+		AgentID: agentID, Name: a.Name, SkillID: skillID, Price: s.BasePrice,
+		BalanceAt: a.Balance, Round: w.round, Time: time.Now(),
+	})
+	w.obs.Publish("skill.buy", map[string]interface{}{
+		"agent": agentID, "name": a.Name, "skill": skillID, "price": s.BasePrice,
+		"balance": a.Balance, "round": w.round,
+	})
+	return true
+}
+
+// SkillMarket 返回技能市场的公开快照（供前端 Marketplace 面板展示）。
+func (w *World) SkillMarket() []SkillOffer {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.skillMarketLocked()
+}
+
+// skillMarketLocked 无锁版技能市场快照（调用方需持锁）。
+func (w *World) skillMarketLocked() []SkillOffer {
+	if w.skills == nil {
+		return nil
+	}
+	out := make([]SkillOffer, 0, len(w.skills.List()))
+	for _, s := range w.skills.List() {
+		out = append(out, SkillOffer{
+			SkillID: s.ID, Name: s.Name, Description: s.Description, Price: s.BasePrice,
+		})
+	}
+	return out
 }
 
 // Consume 消费（用库存满足需求，或直接花钱）。
@@ -278,6 +342,9 @@ type PublicSnapshot struct {
 	OpenJobs    []JobPublic      `json:"openJobs"`
 	RecentTx    []Transaction    `json:"recentTx"`
 	TotalWealth int64            `json:"totalWealth"`
+	// M5 Skill Economy：技能市场 + 技能购买记录（Observatory 回答实验问题）
+	SkillMarket []SkillOffer `json:"skillMarket"`
+	SkillBuys   []SkillBuy   `json:"skillBuys"`
 }
 
 // AgentPublic Agent 公开经济信息。
@@ -287,6 +354,7 @@ type AgentPublic struct {
 	Profession string           `json:"profession"`
 	Balance    int64            `json:"balance"`
 	Inventory  map[string]int   `json:"inventory"`
+	Skills     []skill.AgentSkill `json:"skills"`
 }
 
 // JobPublic 公开工作信息。
@@ -317,6 +385,7 @@ func (w *World) Snapshot() *PublicSnapshot {
 		}
 		snap.Agents = append(snap.Agents, AgentPublic{
 			ID: a.ID, Name: a.Name, Profession: a.Profession, Balance: a.Balance, Inventory: inv,
+			Skills: a.Skills,
 		})
 	}
 	for _, j := range w.Jobs {
@@ -328,6 +397,12 @@ func (w *World) Snapshot() *PublicSnapshot {
 		snap.RecentTx = w.TxLog[len(w.TxLog)-15:]
 	} else {
 		snap.RecentTx = w.TxLog
+	}
+	snap.SkillMarket = w.skillMarketLocked()
+	if len(w.SkillBuys) > 40 {
+		snap.SkillBuys = w.SkillBuys[len(w.SkillBuys)-40:]
+	} else {
+		snap.SkillBuys = w.SkillBuys
 	}
 	return snap
 }
@@ -355,6 +430,9 @@ func (w *World) Inspector(id int64) map[string]interface{} {
 		"totalEarned": a.TotalEarned, "totalSpent": a.TotalSpent,
 		"lastDecision": a.LastDecision, "lastAction": a.LastAction, "lastWhy": a.LastWhy,
 		"skills": a.Skills,
+		// M5 技能投资指标
+		"skillInvested": a.SkillInvested, "skillEarned": a.SkillEarned,
+		"skillReturn": a.SkillEarned - a.SkillInvested,
 	}
 }
 

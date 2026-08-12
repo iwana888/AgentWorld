@@ -35,6 +35,12 @@ func (m *mockBackend) Execute(args map[string]interface{}) (string, error) {
 		reward = 35
 	case "cook_meal":
 		reward = 14
+	case "buy_skill":
+		// M5：技能投资动作返回确认（实际技能获取在 World.BuySkill 完成）
+		if sk, _ := args["skill"].(string); sk != "" {
+			return fmt.Sprintf(`{"success":true,"action":"buy_skill","skill":"%s"}`, sk), nil
+		}
+		return `{"success":true,"action":"buy_skill"}`, nil
 	}
 	return fmt.Sprintf(`{"success":true,"reward":%d}`, reward), nil
 }
@@ -56,6 +62,7 @@ var economyTools = []struct {
 	{"medical_treatment", "医疗救治", "medical_treatment", "doctor"},
 	{"mine_ore", "开采矿石", "mine_ore", "miner"},
 	{"cook_meal", "烹饪餐食", "cook_meal", "chef"},
+	{"buy_skill", "在技能市场购买一门新技能（M5 Skill Economy）", "buy_skill", ""},
 }
 
 // BuildCapability 构造经济世界的能力（含全部工具，供 main.go 注册到 Runtime）。

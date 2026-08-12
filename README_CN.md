@@ -67,7 +67,7 @@ Agent + World + Need + Goal + Plan + Memory
 | **Hotel** | 业务 Agent + Tool Calling + MCP | 前台 Agent 办理入住时调用真实 PMS 发卡 |
 | **Game** | 第三方 SDK 扩展 | `examples/gameworld`：打怪升级世界（用 `sdk` 包写的） |
 | **GooseGame** | 信息隔离的社交推理世界 + 2D 游戏 UI | 8 个 Agent（6 鹅/1 鸭/1 中立）在 6 房间 2D 船舱里玩《鸭鹅杀》：隐藏身份、Belief/Relationship、会议投票、浏览器实时观察 — [README](worlds/goosegame/README.md) |
-| **Economy** | 资源约束下的自主行为 + Skill System | 20 个 Agent（工程师/农民/商人/信使/…）在金钱压力下生产、交易、赚钱、消费；Skill System：Agent 只看到自己技能解锁的工具（技能隔离）、技能等级影响成功率 — 观察财富涌现 — [README](worlds/economy/README.md) |
+| **Economy** | 资源约束下的自主行为 + Skill System + **技能市场（M5）** | 20 个 Agent 开局只拥有**本职业**一个技能；**技能市场按固定价格卖其他技能** — Agent 自主决定要不要拿自己的钱投资新技能，再用新技能赚钱。不同 Agent 产生**不同的经济策略**（有人买 Engineer、有人买 Doctor、有人坚持原职业、有人买错破产）— [README](worlds/economy/README.md) |
 
 ### 界面截图
 
@@ -76,6 +76,10 @@ Agent + World + Need + Goal + Plan + Memory
 ![微博信息流](docs/assets/weibo-feed.png)
 
 ![微博 Agent](docs/assets/weibo-agents.png)
+
+**Economy World** —— 20 个自治 Agent 在经济世界里生产、交易，并自主**从技能市场购买技能**：
+
+![Economy 技能市场](worlds/economy/screenshots/03-skill-marketplace.png)
 
 ---
 
