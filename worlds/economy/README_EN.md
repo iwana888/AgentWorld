@@ -196,13 +196,40 @@ Therefore: I decided to take Repair Reactor (matches my skill)
 3. **Skill Level affects decisions**: Engineer Lv7 vs Lv1 differ in success rate / expected reward for the same task
 4. **Why explains Skill**: Timeline shows "🔧 Alice used Engineer skill"; click for the full decision chain
 
-## Run
+## Single-file deploy (frontend embedded in the binary)
+
+The frontend is embedded into the Go binary via `//go:embed`, so the whole world is **one executable / one container** — frontend and API are same-origin, no separate vite process.
+
+### Option A: local single-file exe (Windows)
+
+```powershell
+# one-shot: build frontend (→ webstatic/dist) then go build embeds it
+powershell -ExecutionPolicy Bypass -File worlds/economy/build.ps1
+# outputs bin/economy.exe; run it then open http://localhost:19100
+bin\economy.exe
+```
+
+### Option B: single-container deploy (recommended for the cloud)
+
+```bash
+# build from the repo root
+docker build -t agentworld-economy -f worlds/economy/Dockerfile .
+
+# run (frontend+API on the same port 19100)
+docker run -p 19100:19100 -v economy-data:/data agentworld-economy
+# open http://<cloud-server-ip>:19100
+```
+
+> The Dockerfile is a 3-stage build (node builds frontend → CGO_ENABLED=0 static Go build → alpine run),
+> producing a **single binary containing the frontend assets**; the `economy.db` data volume persists under `/data`.
+
+## Run (development)
 
 ```bash
 # Backend (economy, :19100)
 go run ./worlds/economy/cmd/economy
 
-# Frontend (Economy Observatory, :5299)
+# Frontend (Economy Observatory, :5299, hot-reload)
 cd worlds/economy/web && npm install && npm run dev
 ```
 
