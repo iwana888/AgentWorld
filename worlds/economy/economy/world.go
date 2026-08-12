@@ -81,8 +81,9 @@ type Goods struct {
 type Job struct {
 	ID        int64
 	Title     string   // 工作名
-	Reward    int64    // 奖励（coins）
+	Reward    int64    // 基础奖励（coins，再按技能等级乘收益倍率）
 	Skill     string   // 所需技能
+	MinLevel  int      // M5.1：最低技能等级门槛（Lv<MinLevel 的 Agent 不能接/做）
 	Location  string   // 地点
 	PostedAt  time.Time
 	ClaimedBy int64    // 被谁接单（0=未接）
@@ -267,25 +268,47 @@ func skillIDToProfessionID(profession string) string {
 	return ""
 }
 
-// spawnInitialJobs 开局生成一批工作需求。
+// JobTemplate 一个工作模板（世界工作池，含 M5.1 技能等级门槛）。
+type JobTemplate struct {
+	Title    string
+	Reward   int64  // 基础奖励
+	Skill    string // 所需技能
+	MinLevel int    // 最低技能等级
+}
+
+// jobTemplates 世界全部工作模板。
+// M5.1 关键：同一技能按等级分档，等级越高能接的工作收益越高。
+// 这验证"Engineer Lv1 / Lv3 / Lv5 产生不同的可做工作 + 收入"。
+var jobTemplates = []JobTemplate{
+	// Engineer：Lv1 基础维修 → Lv3 反应堆 → Lv5 大型工程
+	{"Repair Machine", 35, "engineer", 1},
+	{"Repair Reactor", 60, "engineer", 3},
+	{"Engineering Project", 100, "engineer", 5},
+	// Farmer
+	{"Harvest Crops", 20, "farmer", 1},
+	{"Irrigation", 40, "farmer", 3},
+	// Courier
+	{"Deliver Package", 10, "courier", 1},
+	{"Collect Data", 15, "courier", 2},
+	{"Fleet Transport", 30, "courier", 4},
+	// Doctor
+	{"First Aid", 30, "doctor", 1},
+	{"Medical Treatment", 55, "doctor", 3},
+	{"Surgery", 90, "doctor", 5},
+	// Miner
+	{"Mine Ore", 35, "miner", 1},
+	{"Deep Mining", 60, "miner", 3},
+	// Chef
+	{"Cook Meal", 14, "chef", 1},
+	{"Banquet", 35, "chef", 3},
+}
+
+// spawnInitialJobs 开局生成一批工作需求（覆盖所有技能/等级档位，保证世界活跃）。
 func (w *World) spawnInitialJobs() {
-	seed := []struct {
-		title  string
-		reward int64
-		skill  string
-	}{
-		{"Repair Reactor", 40, "engineer"},
-		{"Harvest Crops", 20, "farmer"},
-		{"Collect Data", 15, "courier"},
-		{"Medical Treatment", 50, "doctor"},
-		{"Deliver Package", 10, "courier"},
-		{"Mine Ore", 35, "miner"},
-		{"Cook Meal", 14, "chef"},
-	}
-	for _, j := range seed {
+	for _, t := range jobTemplates {
 		w.Jobs = append(w.Jobs, &Job{
 			ID: w.nextJobID,
-			Title: j.title, Reward: j.reward, Skill: j.skill,
+			Title: t.Title, Reward: t.Reward, Skill: t.Skill, MinLevel: t.MinLevel,
 			PostedAt: time.Now(), Status: "open",
 		})
 		w.nextJobID++

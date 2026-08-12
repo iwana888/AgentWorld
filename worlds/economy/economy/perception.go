@@ -35,13 +35,19 @@ type Perception struct {
 }
 
 // SkillOffer 市场上的一门技能（可购买）。
+// M5.1 稀缺性：加入 Owners（拥有者数）/ Demand（需求）/ Scarcity（稀缺度），
+// 让 Agent 的投资决策多一个维度（不只比价格/收益，还看稀缺程度）。
 type SkillOffer struct {
 	SkillID     string `json:"skillID"`
 	Name        string `json:"name"`
 	Description string `json:"description"`
-	Price       int64  `json:"price"`  // 固定购买价
-	Owned       bool   `json:"owned"`  // 该 Agent 是否已拥有
+	Price       int64  `json:"price"`    // 固定购买价
+	Owned       bool   `json:"owned"`    // 该 Agent 是否已拥有
 	OwnLevel    int    `json:"ownLevel"` // 已有等级（0=未拥有）
+	// M5.1 稀缺性指标
+	Owners   int     `json:"owners"`   // 拥有该技能的 Agent 数（越少越稀缺）
+	Demand   float64 `json:"demand"`   // 需求强度（0~1+，来自该技能开放工作的总报酬）
+	Scarcity float64 `json:"scarcity"` // 稀缺度 = Demand / Owners（0=无需求；>0 越大越稀缺）
 }
 
 // SkillLevel 返回该 Agent 对某技能的熟练度（0=未拥有）。
@@ -78,7 +84,7 @@ func (w *World) BuildPerception(agentID int64) *Perception {
 	}
 	// 可用工作（BuildPerception 已持锁，用无锁版避免死锁）
 	for _, j := range w.openJobsLocked() {
-		p.OpenJobs = append(p.OpenJobs, JobPublic{ID: j.ID, Title: j.Title, Reward: j.Reward, Skill: j.Skill})
+		p.OpenJobs = append(p.OpenJobs, JobPublic{ID: j.ID, Title: j.Title, Reward: j.Reward, Skill: j.Skill, MinLevel: j.MinLevel})
 	}
 	// 价格
 	for name, price := range w.Prices {
@@ -87,11 +93,33 @@ func (w *World) BuildPerception(agentID int64) *Perception {
 	// M5 Skill Marketplace：注入可购买技能及其价格（固定），标记是否已拥有。
 	// "当前能力"（已拥有技能）与"市场机会"（可买技能）一起喂给 Planner。
 	if w.skills != nil {
+		// M5.1 稀缺性：先统计各技能拥有者数 + 需求（开放工作的总报酬）
+		ownerCount := map[string]int{}
+		demand := map[string]int64{}
+		for _, ag := range w.Agents {
+			for _, as := range ag.Skills {
+				if as.Level > 0 {
+					ownerCount[as.SkillID]++
+				}
+			}
+		}
+		for _, j := range w.Jobs {
+			if j.Status == "open" {
+				demand[j.Skill] += j.Reward
+			}
+		}
 		for _, s := range w.skills.List() {
 			lv := a.SkillLevel(s.ID)
+			owners := ownerCount[s.ID]
+			dem := float64(demand[s.ID])
+			scarcity := 0.0
+			if owners > 0 {
+				scarcity = dem / float64(owners)
+			}
 			p.Market = append(p.Market, SkillOffer{
 				SkillID: s.ID, Name: s.Name, Description: s.Description,
 				Price: s.BasePrice, Owned: lv > 0, OwnLevel: lv,
+				Owners: owners, Demand: dem, Scarcity: scarcity,
 			})
 		}
 	}

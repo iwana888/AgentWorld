@@ -164,6 +164,7 @@ func (p *planner) decideEconomically(v *economy.Perception) *sdk.Decision {
 // evaluateJob 评估是否接受某份工作：综合报酬、技能匹配、当前余额、性格风险偏好。
 // 关键（M7 技能隔离）：Agent 只能选择它拥有技能对应的工作。
 // 没有对应技能的岗位，即使报酬再高，这个 Agent 也不会选（不能调用它没有的工具）。
+// M5.1：等级门槛 —— 技能等级 < 工作 MinLevel 的岗位同样"看不见/做不了"。
 func (p *planner) evaluateJob(v *economy.Perception) *sdk.Decision {
 	var best *economy.JobPublic
 	bestScore := -1.0
@@ -177,9 +178,14 @@ func (p *planner) evaluateJob(v *economy.Perception) *sdk.Decision {
 		}
 		// 技能等级匹配度（0~1）：本职业/高等级的工作更可能成功
 		skill := v.SkillLevel(j.Skill)
+		// M5.1 等级门槛：等级不够做不了（即使拥有该技能）
+		if skill < j.MinLevel {
+			continue
+		}
 		skillMatch := 0.3 + 0.7*float64(skill)/7.0
-		// 报酬吸引力：报酬越高越想要
-		rewardAttract := float64(j.Reward) / 60.0
+		// 报酬吸引力：用"等级倍率后的实际到手收益"计算，等级越高越倾向高收益工作
+		effectiveReward := float64(j.Reward) * economy.IncomeMultiplier(skill)
+		rewardAttract := effectiveReward / 80.0
 		if rewardAttract > 1 {
 			rewardAttract = 1
 		}
@@ -212,31 +218,68 @@ func (p *planner) evaluateJob(v *economy.Perception) *sdk.Decision {
 	}
 }
 
-// skillIncomeRef 技能收益参考（该技能对应工作的平均报酬，用于评估"买了能赚多少"）。
-// 与 world.SpawnJobs 的工作池保持一致（Repair Reactor 40 / Harvest 20 / ...）。
-// Trader 没有固定工作，靠套利，收益记为浮动值 20。
-var skillIncomeRef = map[string]int64{
-	"engineer": 40, "farmer": 20, "courier": 13, "doctor": 50,
-	"miner": 35, "chef": 14, "trader": 20,
+// skillIncomeRef 技能"长期收益潜力"参考（满级 Lv7 × 该技能最高档工作的收益）。
+// 用于 evaluateSkill 评估"买了这个技能，长期能赚多少"。
+// M5.1：收益随等级增长（倍率），所以用最高档工作 × 满级倍率代表潜力。
+var skillIncomeRef = map[string]int64{}
+
+func init() {
+	// 从工作池模板计算各技能的收益潜力（与 world.jobTemplates 一致）
+	skillIncomeRef = map[string]int64{
+		"engineer": incomePotential("engineer"), "farmer": incomePotential("farmer"),
+		"courier": incomePotential("courier"), "doctor": incomePotential("doctor"),
+		"miner": incomePotential("miner"), "chef": incomePotential("chef"),
+		"trader": 20, // Trader 无固定工作，靠套利，记浮动收益
+	}
 }
 
-// currentIncome 估算 Agent 当前（已拥有技能）的平均单次工作收益。
-// 只统计它"看得见"（已拥有）的技能对应的收益参考，取平均。
-func currentIncome(v *economy.Perception) int64 {
-	if len(v.Skills) == 0 {
-		return 0
-	}
-	var sum, n int64
-	for _, s := range v.Skills {
-		if inc, ok := skillIncomeRef[s.SkillID]; ok {
-			sum += inc
-			n++
+// incomePotential 计算某技能的最高档基础收益（Lv7 满级倍率），作为收益潜力参考。
+func incomePotential(skillID string) int64 {
+	best := int64(0)
+	for _, t := range economy.JobTemplates() {
+		if t.Skill == skillID {
+			inc := int64(float64(t.Reward) * economy.IncomeMultiplier(7))
+			if inc > best {
+				best = inc
+			}
 		}
 	}
-	if n == 0 {
-		return 0
+	return best
+}
+
+// currentIncome 估算 Agent 当前实际能拿到的最高单次收益。
+// M5.1：从开放工作里筛出"该 Agent 当前技能等级够得着"的工作，取最高实际到手收益
+// （基础收益 × 等级倍率）。等级越低 → 能做的工作收益越低。
+func currentIncome(v *economy.Perception) int64 {
+	best := int64(0)
+	for i := range v.OpenJobs {
+		j := &v.OpenJobs[i]
+		lv := v.SkillLevel(j.Skill)
+		if lv <= 0 || lv < j.MinLevel {
+			continue // 没技能 或 等级不够
+		}
+		inc := int64(float64(j.Reward) * economy.IncomeMultiplier(lv))
+		if inc > best {
+			best = inc
+		}
 	}
-	return sum / n
+	if best > 0 {
+		return best
+	}
+	// 没有可见工作时的兜底：用技能收益潜力估算
+	if len(v.Skills) > 0 {
+		var sum, n int64
+		for _, s := range v.Skills {
+			if inc, ok := skillIncomeRef[s.SkillID]; ok {
+				sum += inc
+				n++
+			}
+		}
+		if n > 0 {
+			return sum / n
+		}
+	}
+	return 0
 }
 
 // SkillEval 一次技能投资评估的结构化结果（M5 核心：喂给 Planner 的结构）。
@@ -330,6 +373,15 @@ func (p *planner) evaluateSkill(v *economy.Perception) *sdk.Decision {
 			riskTolerance = -0.1 // 稳健者更保守
 		}
 		score += riskTolerance
+		// M5.1 稀缺性：拥有者越少、需求越高（Scarcity 越大）越值得投 —— 稀缺技能价值更高
+		if off.Scarcity > 0 {
+			switch {
+			case off.Owners <= 1:
+				score += 0.1 // 几乎没人会 → 稀缺
+			case off.Owners <= 3:
+				score += 0.05
+			}
+		}
 		// 买不起直接跳过（不够格）
 		if !ev.Affordable {
 			ev.Recommendation = "NOT_BUY"

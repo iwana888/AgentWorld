@@ -97,30 +97,42 @@ func (w *World) ClaimJob(agentID, jobID int64) bool {
 	return false
 }
 
-// DoJob 完成一份工作：按技能判定成功率，成功则发奖励（世界付款）。
+// DoJob 完成一份工作：先检查技能等级门槛，再按技能判定成功率，成功则发奖励（世界付款）。
+// M5.1 关键改动：
+//   - 等级门槛：Agent 技能等级 < j.MinLevel → 直接失败（不能做更高等级的工作）
+//   - 收益倍率：奖励 = baseReward * incomeMultiplier(level)，等级越高赚得越多
+// 这让"升级技能本身就是投资"成立（Lv1/Lv3/Lv5 的收入真正不同）。
 func (w *World) DoJob(agentID, jobID int64) (int64, string) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	for _, j := range w.Jobs {
 		if j.ID == jobID && j.Status == "claimed" && j.ClaimedBy == agentID {
 			skill := w.Agents[agentID].SkillLevel(j.Skill)
+			// M5.1 等级门槛：等级不够直接做不了（技能隔离的"等级维度"）
+			if skill < j.MinLevel {
+				j.Status = "open"
+				j.ClaimedBy = 0
+				return 0, j.Title + "需要" + j.Skill + " Lv" + itoa(int64(j.MinLevel)) + "，我等级不够"
+			}
 			success := rand.Float64() < 0.3+0.5*float64(skill)/7.0
 			if success {
 				j.Status = "done"
-				w.transferLocked(0, agentID, j.Reward, "job-reward", j.Title)
+				// M5.1 收益倍率：等级越高，同一份工作收入越高
+				reward := int64(float64(j.Reward) * IncomeMultiplier(skill))
+				w.transferLocked(0, agentID, reward, "job-reward", j.Title)
 				// M5：累加技能投资收益 + 技能熟练度升级（做得多 → 越熟练 → 成功率/收益越高）。
 				// 这让"购买新技能后需要做该类工作逐渐熟练"成为真实过程：
 				// 买了技能 → 做该类工作 → 升级 → 收入增长（投资回报显现）。
 				if a, ok := w.Agents[agentID]; ok {
-					a.SkillEarned += j.Reward
+					a.SkillEarned += reward
 					a.UpgradeSkill(j.Skill)
 				}
 				w.obs.Publish("job.done", map[string]interface{}{
-					"job": j.ID, "title": j.Title, "agent": agentID, "reward": j.Reward,
+					"job": j.ID, "title": j.Title, "agent": agentID, "reward": reward, "skill": j.Skill, "level": skill,
 				})
 				// 性能：已完成工作归档清理，防止 Jobs 无限增长
 				w.trimJobsLocked()
-				return j.Reward, "完成了" + j.Title + "，获得" + itoa(j.Reward) + " coins"
+				return reward, "完成了" + j.Title + "，获得" + itoa(reward) + " coins"
 			}
 			j.Status = "open"
 			j.ClaimedBy = 0
@@ -128,6 +140,72 @@ func (w *World) DoJob(agentID, jobID int64) (int64, string) {
 		}
 	}
 	return 0, "没有这份工作"
+}
+
+// JobTemplates 返回世界工作模板的只读副本（供 Planner 估算技能收益潜力）。
+func JobTemplates() []JobTemplate {
+	out := make([]JobTemplate, len(jobTemplates))
+	copy(out, jobTemplates)
+	return out
+}
+
+// SkillIncomeAtLevel 返回某技能在指定等级下"可做的最高档工作"的实际到手收益（基础收益×倍率）。
+// M5.1：等级越高能解锁更高收益工作（等级门槛）+ 同一工作赚更多（倍率）。
+// 返回 0 表示该技能没有匹配的工作（如 Trader 靠套利，无固定工作）。
+func (w *World) SkillIncomeAtLevel(skillID string, level int) int64 {
+	if level <= 0 {
+		return 0
+	}
+	// 找到该技能等级 ≤ level 的最高档工作
+	best := int64(0)
+	for _, t := range jobTemplates {
+		if t.Skill == skillID && t.MinLevel <= level {
+			inc := int64(float64(t.Reward) * IncomeMultiplier(level))
+			if inc > best {
+				best = inc
+			}
+		}
+	}
+	return best
+}
+
+// SkillMaxIncome 返回某技能可达到的最高收益潜力（Lv7 满级 × 最高档工作）。
+// 用于"买了这个技能，长期能赚多少"的评估参考。
+func (w *World) SkillMaxIncome(skillID string) int64 {
+	best := int64(0)
+	for _, t := range jobTemplates {
+		if t.Skill == skillID {
+			inc := int64(float64(t.Reward) * IncomeMultiplier(7))
+			if inc > best {
+				best = inc
+			}
+		}
+	}
+	return best
+}
+
+// IncomeMultiplier 技能等级 → 收益倍率（M5.1）。
+// 阶梯式增长，让"升级技能"的收益回报显著：
+//   Lv1:1.0  Lv2:1.2  Lv3:1.5  Lv4:1.8  Lv5:2.2  Lv6:2.6  Lv7:3.0
+// 配合等级门槛，Lv1 只能做低收益工作、Lv5 能做高收益工作且收入翻倍以上。
+// 导出供 Planner（module.go）计算实际到手收益用。
+func IncomeMultiplier(level int) float64 {
+	switch {
+	case level >= 7:
+		return 3.0
+	case level >= 6:
+		return 2.6
+	case level >= 5:
+		return 2.2
+	case level >= 4:
+		return 1.8
+	case level >= 3:
+		return 1.5
+	case level >= 2:
+		return 1.2
+	default:
+		return 1.0
+	}
 }
 
 // AvailableJobs 返回 open 状态的工作（供 Perception 展示）。
@@ -252,10 +330,32 @@ func (w *World) skillMarketLocked() []SkillOffer {
 	if w.skills == nil {
 		return nil
 	}
+	// M5.1 稀缺性：统计各技能拥有者数 + 需求（开放工作的总报酬）
+	ownerCount := map[string]int{}
+	demand := map[string]int64{}
+	for _, ag := range w.Agents {
+		for _, as := range ag.Skills {
+			if as.Level > 0 {
+				ownerCount[as.SkillID]++
+			}
+		}
+	}
+	for _, j := range w.Jobs {
+		if j.Status == "open" {
+			demand[j.Skill] += j.Reward
+		}
+	}
 	out := make([]SkillOffer, 0, len(w.skills.List()))
 	for _, s := range w.skills.List() {
+		owners := ownerCount[s.ID]
+		dem := float64(demand[s.ID])
+		scarcity := 0.0
+		if owners > 0 {
+			scarcity = dem / float64(owners)
+		}
 		out = append(out, SkillOffer{
 			SkillID: s.ID, Name: s.Name, Description: s.Description, Price: s.BasePrice,
+			Owners: owners, Demand: dem, Scarcity: scarcity,
 		})
 	}
 	return out
@@ -289,25 +389,12 @@ func (w *World) SpawnJobs() {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.touchVersionLocked() // 工作池变化使快照失效
-	pool := []struct {
-		title  string
-		reward int64
-		skill  string
-	}{
-		{"Repair Reactor", 40, "engineer"},
-		{"Harvest Crops", 20, "farmer"},
-		{"Collect Data", 15, "courier"},
-		{"Medical Treatment", 50, "doctor"},
-		{"Deliver Package", 10, "courier"},
-		{"Mine Ore", 35, "miner"},
-		{"Cook Meal", 14, "chef"},
-	}
 	n := 1 + rand.Intn(3)
 	for i := 0; i < n; i++ {
-		j := pool[rand.Intn(len(pool))]
+		j := jobTemplates[rand.Intn(len(jobTemplates))]
 		w.Jobs = append(w.Jobs, &Job{
-			ID:    w.nextJobID,
-			Title: j.title, Reward: j.reward, Skill: j.skill,
+			ID:       w.nextJobID,
+			Title:    j.Title, Reward: j.Reward, Skill: j.Skill, MinLevel: j.MinLevel,
 			PostedAt: time.Now(), Status: "open",
 		})
 		w.nextJobID++
@@ -414,10 +501,11 @@ type AgentPublic struct {
 
 // JobPublic 公开工作信息。
 type JobPublic struct {
-	ID     int64  `json:"id"`
-	Title  string `json:"title"`
-	Reward int64  `json:"reward"`
-	Skill  string `json:"skill"`
+	ID       int64  `json:"id"`
+	Title    string `json:"title"`
+	Reward   int64  `json:"reward"`
+	Skill    string `json:"skill"`
+	MinLevel int    `json:"minLevel"` // M5.1：所需技能最低等级
 }
 
 // Snapshot 返回带锁的经济世界快照。
@@ -454,7 +542,7 @@ func (w *World) snapshotLocked() *PublicSnapshot {
 	}
 	for _, j := range w.Jobs {
 		if j.Status == "open" {
-			snap.OpenJobs = append(snap.OpenJobs, JobPublic{ID: j.ID, Title: j.Title, Reward: j.Reward, Skill: j.Skill})
+			snap.OpenJobs = append(snap.OpenJobs, JobPublic{ID: j.ID, Title: j.Title, Reward: j.Reward, Skill: j.Skill, MinLevel: j.MinLevel})
 		}
 	}
 	if len(w.TxLog) > 15 {
