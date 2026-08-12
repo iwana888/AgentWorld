@@ -159,6 +159,33 @@ AgentWorld Runtime (sdk.Module contract)
 - `server.go` — HTTP + SSE observatory service
 - `web/` — AI Observatory front-end
 
+## Single-file deploy (frontend embedded in the binary)
+
+The frontend is embedded into the Go binary via `//go:embed`, so the whole world is **one executable / one container** — frontend and API are same-origin, no separate vite process.
+
+### Option A: local single-file exe (Windows)
+
+```powershell
+# one-shot: build frontend (→ webstatic/dist) then go build embeds it
+powershell -ExecutionPolicy Bypass -File worlds/goosegame/build.ps1
+# outputs bin/goose.exe; run it then open http://localhost:19090
+bin\goose.exe
+```
+
+### Option B: single-container deploy (recommended for the cloud)
+
+```bash
+# build from the repo root
+docker build -t agentworld-goose -f worlds/goosegame/Dockerfile .
+
+# run (frontend+API on the same port 19090)
+docker run -p 19090:19090 -v goose-data:/data agentworld-goose
+# open http://<cloud-server-ip>:19090
+```
+
+> The Dockerfile is a 3-stage build (node builds frontend → CGO_ENABLED=0 static Go build → alpine run),
+> producing a **single binary containing the frontend assets**; the `goosegame.db` data volume persists under `/data`.
+
 ## Run
 
 ### 1. Backend (game + observatory)
@@ -243,7 +270,10 @@ worlds/goosegame/
 ├── cmd/goose/main.go    # standalone entry (shares the root go.mod)
 ├── goose/               # game core (game/actions/perception/observatory)
 ├── module.go            # sdk.Module implementation
-├── server.go            # HTTP + SSE observatory service
+├── server.go            # HTTP + SSE observatory + embedded frontend (go:embed)
+├── webstatic/           # embedded frontend build output (//go:embed all:dist)
+├── build.ps1            # one-shot single-file exe build (frontend embedded)
+├── Dockerfile           # single-container deploy (node→go→alpine 3-stage)
 └── web/                 # AI Observatory front-end (Vue3 + Vite + TS + ElementPlus)
     └── src/components/  # WorldView / CharacterSprite / MeetingOverlay / AgentPanel / Timeline
 ```

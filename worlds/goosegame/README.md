@@ -160,6 +160,33 @@ AgentWorld Runtime (sdk.Module 契约)
 - `server.go` —— 观测服务 HTTP + SSE
 - `web/` —— AI 社会观察台前端
 
+## 单文件部署（前端内嵌进 exe，可直接上云）
+
+前端已通过 `//go:embed` 打进 Go 二进制，**整个世界只需一个可执行文件 / 一个容器**，前端与 API 同源，无需单独跑 vite。
+
+### 方式一：本地构建单文件 exe（Windows）
+
+```powershell
+# 一键：先构建前端(→ webstatic/dist) 再 go build 内嵌
+powershell -ExecutionPolicy Bypass -File worlds/goosegame/build.ps1
+# 产出 bin/goose.exe，运行后访问 http://localhost:19090
+bin\goose.exe
+```
+
+### 方式二：Docker 单容器部署（推荐上云）
+
+```bash
+# 在项目根目录构建
+docker build -t agentworld-goose -f worlds/goosegame/Dockerfile .
+
+# 运行（前端+API 同端口 19090）
+docker run -p 19090:19090 -v goose-data:/data agentworld-goose
+# 访问 http://<云服务器IP>:19090
+```
+
+> Dockerfile 为 3 阶段构建（node 构建前端 → CGO_ENABLED=0 静态编译 → alpine 运行），
+> 产物是含前端资源的**单一二进制**，数据卷 `goosegame.db` 持久化在 `/data`。
+
 ## 运行
 
 ### 1. 后端（游戏 + 观测服务）
@@ -244,7 +271,10 @@ worlds/goosegame/
 ├── cmd/goose/main.go    # 独立入口（共享主 go.mod）
 ├── goose/               # 游戏核心（game/actions/perception/observatory）
 ├── module.go            # sdk.Module 实现
-├── server.go            # 观测 HTTP + SSE 服务
+├── server.go            # 观测 HTTP + SSE 服务 + 内嵌前端（go:embed）
+├── webstatic/           # 内嵌前端构建产物（//go:embed all:dist）
+├── build.ps1            # 一键构建单文件 exe（前端内嵌）
+├── Dockerfile           # 单容器部署（node→go→alpine 3 阶段）
 └── web/                 # AI 社会观察台前端（Vue3 + Vite + TS + ElementPlus）
     └── src/components/  # WorldView / CharacterSprite / MeetingOverlay / AgentPanel / Timeline
 ```
