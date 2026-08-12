@@ -170,11 +170,13 @@ func (p *planner) evaluateJob(v *economy.Perception) *sdk.Decision {
 	for i := range v.OpenJobs {
 		j := &v.OpenJobs[i]
 		// 技能隔离：Agent 没有该工作对应技能 → 直接跳过（看不见/用不了）
-		if !p.world.Agent(v.AgentID).HasSkill(j.Skill) {
+		// 性能优化：直接复用 Perception 里已构建的技能信息（无锁），
+		// 避免循环内重复加锁查询 world.Agent / world.SkillOf。
+		if !v.HasSkill(j.Skill) {
 			continue
 		}
 		// 技能等级匹配度（0~1）：本职业/高等级的工作更可能成功
-		skill := p.world.SkillOf(v.AgentID, j.Skill)
+		skill := v.SkillLevel(j.Skill)
 		skillMatch := 0.3 + 0.7*float64(skill)/7.0
 		// 报酬吸引力：报酬越高越想要
 		rewardAttract := float64(j.Reward) / 60.0

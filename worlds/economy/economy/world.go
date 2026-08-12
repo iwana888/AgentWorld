@@ -107,7 +107,7 @@ type World struct {
 	Agents     map[int64]*Agent
 	Goods      map[string]*Goods
 	Jobs       []*Job
-	TxLog      []Transaction // 所有资金流动
+	TxLog      []Transaction // 资金流动（保留最近 maxTx，防止无限增长）
 	Prices     map[string]int64 // 当前商品价格
 	skills     *skill.Registry   // 技能市场（M5：技能定义 + 固定价格）
 	// M5 实验观测：技能购买记录（谁买/花多少/买的什么）+ 投资收益统计
@@ -116,6 +116,15 @@ type World struct {
 	nextTxID   int64
 	round      int
 	startedAt  time.Time
+	// 性能优化：清理/缓存
+	doneJobs   int64         // 已完成并归档的工作数（用于控制 Jobs 长度）
+	doneTx     int64         // 已归档的交易数（TxLog 的起始偏移）
+	// 快照缓存：状态版本号变化才重建，避免前端高频轮询时全量重建。
+	// 所有写操作（Transfer/DoJob/SpawnJobs/BuySkill…）都递增 version 使缓存失效，
+	// 因此缓存内容始终与当前状态一致，不会过时。
+	version    int64         // 状态版本号（每次写操作 +1）
+	snapCache  *PublicSnapshot
+	snapVer    int64         // 缓存对应的版本号
 }
 
 // SkillBuy 一次技能购买记录（Observatory 回答"谁买了技能"）。

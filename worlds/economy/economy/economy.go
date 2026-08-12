@@ -29,6 +29,7 @@ func (w *World) transferLocked(from, to, amount int64, kind, detail string) bool
 	if amount <= 0 {
 		return false
 	}
+	w.touchVersionLocked() // 资金变动使快照失效
 	if from != 0 {
 		a, ok := w.Agents[from]
 		if !ok || a.Balance < amount {
@@ -52,11 +53,20 @@ func (w *World) transferLocked(from, to, amount int64, kind, detail string) bool
 	}
 	w.nextTxID++
 	w.TxLog = append(w.TxLog, tx)
+	// 性能：交易记录只保留最近 maxTxLog 条，防止无限增长
+	if len(w.TxLog) > maxTxLog {
+		drop := len(w.TxLog) - maxTxLog
+		w.doneTx += int64(drop)
+		w.TxLog = w.TxLog[drop:]
+	}
 	w.obs.Publish("tx", map[string]interface{}{
 		"id": tx.ID, "from": from, "to": to, "amount": amount, "kind": kind, "detail": detail,
 	})
 	return true
 }
+
+// maxTxLog 交易记录保留上限（资金流动总量仍由 doneTx 偏移累计，观测不受影响）。
+const maxTxLog = 5000
 
 // BalanceOf 返回某 Agent 余额。
 func (w *World) BalanceOf(id int64) int64 {
@@ -108,6 +118,8 @@ func (w *World) DoJob(agentID, jobID int64) (int64, string) {
 				w.obs.Publish("job.done", map[string]interface{}{
 					"job": j.ID, "title": j.Title, "agent": agentID, "reward": j.Reward,
 				})
+				// 性能：已完成工作归档清理，防止 Jobs 无限增长
+				w.trimJobsLocked()
 				return j.Reward, "完成了" + j.Title + "，获得" + itoa(j.Reward) + " coins"
 			}
 			j.Status = "open"
@@ -276,6 +288,7 @@ func (w *World) Consume(agentID int64, goods string) bool {
 func (w *World) SpawnJobs() {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	w.touchVersionLocked() // 工作池变化使快照失效
 	pool := []struct {
 		title  string
 		reward int64
@@ -313,6 +326,48 @@ func (w *World) openJobsLocked() []*Job {
 		}
 	}
 	return out
+}
+
+// maxOpenJobs / maxDoneJobs 控制工作池规模，防止 Jobs 无限增长导致遍历越来越慢。
+//   - 保留最近 maxDoneJobs 个已完成的 Job（前端观察、快照不受影响）
+//   - 保留 maxOpenJobs 个开放 Job（世界活跃需求）
+const (
+	maxOpenJobs = 200
+	maxDoneJobs = 500
+)
+
+// trimJobsLocked 归档清理已完成的工作：超过上限的从 Jobs 头部移除。
+// 调用方需持锁（通常在 DoJob 成功后调用）。
+func (w *World) trimJobsLocked() {
+	w.doneJobs++
+	// 统计当前开放工作数 + 已完成工作数（头部多为已完成/已认领的旧工作）
+	var done, open int
+	trim := 0
+	for _, j := range w.Jobs {
+		switch j.Status {
+		case "open":
+			open++
+		default: // claimed / done：都算"非开放"，可从头部清理
+			done++
+		}
+	}
+	// 开放工作超限：也清理最旧的（优先清已认领/已完成的头部）
+	if open > maxOpenJobs {
+		trim = open - maxOpenJobs
+	}
+	if done-trim > maxDoneJobs {
+		if need := done - maxDoneJobs - trim; need > 0 {
+			trim += need
+		}
+	}
+	if trim <= 0 {
+		return
+	}
+	if trim >= len(w.Jobs) {
+		w.Jobs = w.Jobs[:0]
+		return
+	}
+	w.Jobs = w.Jobs[trim:]
 }
 
 // RoundTick 每轮推进：生成新需求 + 价格波动（世界自己动）。
@@ -366,9 +421,18 @@ type JobPublic struct {
 }
 
 // Snapshot 返回带锁的经济世界快照。
+// 性能优化：round 未变化时直接返回缓存，避免前端高频轮询时每次都全量重建。
 func (w *World) Snapshot() *PublicSnapshot {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	return w.snapshotLocked()
+}
+
+// snapshotLocked 无锁构建快照（带缓存：状态版本号未变则复用）。
+func (w *World) snapshotLocked() *PublicSnapshot {
+	if w.snapCache != nil && w.snapVer == w.version {
+		return w.snapCache
+	}
 	snap := &PublicSnapshot{
 		Round:       w.round,
 		Prices:      map[string]int64{},
@@ -404,7 +468,16 @@ func (w *World) Snapshot() *PublicSnapshot {
 	} else {
 		snap.SkillBuys = w.SkillBuys
 	}
+	// 缓存本次快照：版本号未变时的重复请求直接复用
+	w.snapCache = snap
+	w.snapVer = w.version
 	return snap
+}
+
+// touchVersionLocked 递增状态版本号，使快照缓存失效（调用方需持锁）。
+// 所有会改变快照可见状态的写操作都应调用它。
+func (w *World) touchVersionLocked() {
+	w.version++
 }
 
 // totalWealthLocked 无锁统计总资产。

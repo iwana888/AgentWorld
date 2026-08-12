@@ -28,6 +28,9 @@ type ObsEvent struct {
 type ObservOpts struct {
 	// MaxEvents 内存事件存储上限（默认 1000）。
 	MaxEvents int
+	// MaxSubs SSE 实时订阅者上限（默认 32）。超过则拒绝新订阅，
+	// 避免大量浏览器连接放大 Publish 遍历成本。
+	MaxSubs int
 }
 
 // Observatory 事件总线 + In-memory Event Store。
@@ -36,6 +39,7 @@ type Observatory struct {
 	events   []ObsEvent     // 环形缓冲（最近 MaxEvents 条）
 	max      int
 	subs     map[int]chan ObsEvent // SSE 订阅者
+	maxSubs  int
 	nextSub  int
 }
 
@@ -45,9 +49,14 @@ func NewObservatory(opts ObservOpts) *Observatory {
 	if max <= 0 {
 		max = 1000
 	}
+	maxSubs := opts.MaxSubs
+	if maxSubs <= 0 {
+		maxSubs = 32
+	}
 	return &Observatory{
-		max:   max,
-		subs:  map[int]chan ObsEvent{},
+		max:     max,
+		maxSubs: maxSubs,
+		subs:    map[int]chan ObsEvent{},
 	}
 }
 
@@ -70,16 +79,20 @@ func (o *Observatory) Publish(typ string, data interface{}) {
 }
 
 // Subscribe 注册一个 SSE 订阅者，返回一个接收事件的 channel 与取消函数。
+// 订阅者数量超过 maxSubs 时返回 nil（拒绝新订阅），避免 Publish 被大量连接放大。
 func (o *Observatory) Subscribe(buffer int) (int, chan ObsEvent, func()) {
 	if buffer <= 0 {
 		buffer = 64
 	}
 	ch := make(chan ObsEvent, buffer)
 	o.mu.Lock()
+	defer o.mu.Unlock()
+	if len(o.subs) >= o.maxSubs {
+		return -1, nil, func() {} // 达到订阅上限，拒绝
+	}
 	id := o.nextSub
 	o.nextSub++
 	o.subs[id] = ch
-	o.mu.Unlock()
 	return id, ch, func() {
 		o.mu.Lock()
 		delete(o.subs, id)

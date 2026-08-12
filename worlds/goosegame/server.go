@@ -168,6 +168,11 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 
 	_, ch, cancel := s.mod.Observatory().Subscribe(64)
 	defer cancel()
+	if ch == nil {
+		// 订阅者已达上限：拒绝连接，提示稍后重试
+		http.Error(w, "subscription limit reached, retry later", http.StatusServiceUnavailable)
+		return
+	}
 
 	// 心跳，保持连接
 	keepalive := time.NewTicker(15 * time.Second)
