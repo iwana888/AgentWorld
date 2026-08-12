@@ -69,16 +69,38 @@ const selectedAgent = computed(() => {
 </script>
 
 <style>
-.app { display: flex; flex-direction: column; height: 100vh; padding: 12px; gap: 12px; }
-.app-header { display: flex; align-items: center; justify-content: space-between; color: #e2e9ff; }
-.title { font-size: 18px; font-weight: 800; display: flex; align-items: center; gap: 8px; }
+.app { display: flex; flex-direction: column; height: 100vh; padding: 12px; gap: 12px;
+  max-width: 100vw; overflow-x: hidden; box-sizing: border-box; }
+.app-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: #e2e9ff;
+  flex-wrap: wrap; }
+.title { font-size: 18px; font-weight: 800; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .logo { font-size: 22px; }
 .sub { font-size: 12px; color: #7a86a6; font-weight: 400; }
 .repo { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: #7cc3ff;
   text-decoration: none; padding: 2px 8px; border: 1px solid #2a3550; border-radius: 20px;
-  background: #0e1322; transition: all .2s; }
+  background: #0e1322; transition: all .2s; white-space: nowrap; }
 .repo:hover { color: #9ed2ff; border-color: #3a5278; background: #131b2e; }
-.meta { display: flex; gap: 6px; }
+.meta { display: flex; gap: 6px; flex-wrap: wrap; }
+
+/* 桌面：5 列，固定高度内部滚动 */
 .app-body { flex: 1; display: grid; grid-template-columns: 0.8fr 1.1fr 0.9fr 0.9fr 1fr; gap: 10px; min-height: 0; }
 .col-rank, .col-inspector, .col-tx, .col-sm, .col-lm { min-height: 0; overflow-y: auto; }
+
+/* 平板：2 列 */
+@media (max-width: 1200px) {
+  .app { height: auto; }
+  .app-body { grid-template-columns: 1fr 1fr; }
+  .col-rank, .col-inspector, .col-tx, .col-sm, .col-lm {
+    min-height: 0; overflow-y: auto; max-height: 70vh; }
+}
+
+/* 手机：单列堆叠 */
+@media (max-width: 768px) {
+  .app { padding: 8px; gap: 8px; }
+  .app-body { grid-template-columns: 1fr; }
+  .col-rank, .col-inspector, .col-tx, .col-sm, .col-lm {
+    overflow-y: visible; max-height: none; }
+  .title { font-size: 16px; }
+  .repo span { display: none; }  /* 手机上只留 GitHub 图标 */
+}
 </style>
