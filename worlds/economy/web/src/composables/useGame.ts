@@ -20,7 +20,10 @@ export function useGame() {
 
   async function loadSnapshot() {
     try {
-      const res = await fetch('/api/game')
+      // 相对路径：基于当前页面 URL 解析。
+      //  - 单文件部署（base './'，页面在 /）：解析为 /api/game
+      //  - nginx 子路径部署（页面在 /economy/）：解析为 /economy/api/game
+      const res = await fetch('api/game')
       const data = await res.json()
       applySnapshot(data)
     } catch (e) {
@@ -41,7 +44,8 @@ export function useGame() {
 
   function connect() {
     if (es) es.close()
-    es = new EventSource('/api/events/stream')
+    // 相对路径（同 loadSnapshot 的说明，nginx 子路径下解析为 /economy/api/events/stream）
+    es = new EventSource('api/events/stream')
     es.onopen = () => {
       connected.value = true
       loadSnapshot()
@@ -71,7 +75,8 @@ export function useGame() {
 
   async function fetchInspector(id: number): Promise<InspectorData | null> {
     try {
-      const res = await fetch(`/api/agents/${id}`)
+      // 相对路径（nginx 子路径下解析为 /economy/api/agents/{id}）
+      const res = await fetch(`api/agents/${id}`)
       if (!res.ok) return null
       return await res.json()
     } catch {
