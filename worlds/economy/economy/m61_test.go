@@ -28,20 +28,22 @@ func setupLaborWorld(t *testing.T) *World {
 }
 
 // TestHireAgentEscrow 验证雇佣的核心：Escrow 扣款 + 合约创建 + 进入 working（M6.2.1）。
+// M6.4：扣款 = worker 独立报价（动态），非固定 20。
 func TestHireAgentEscrow(t *testing.T) {
 	w := setupLaborWorld(t)
 	contractID, ok := w.HireAgent(1, 2, "repair_machine")
 	if !ok {
 		t.Fatal("hire should succeed")
 	}
-	// 雇主 Bob：100 - 20 = 80
-	if w.Agents[1].Balance != 80 {
-		t.Errorf("Bob balance should be 80, got %d", w.Agents[1].Balance)
+	// M6.4：扣款 = Alice 的独立报价（动态）
+	quote := w.workerQuoteLocked(w.Services["repair_machine"], w.Agents[2])
+	if w.Agents[1].Balance != 100-quote {
+		t.Errorf("Bob balance should be %d, got %d", 100-quote, w.Agents[1].Balance)
 	}
-	// M6.2.1：合约进入 working（不再立即完成），Escrow = 20
+	// M6.2.1：合约进入 working（不再立即完成），Escrow = 报价
 	ct := w.Contracts[0]
-	if ct.Escrow != 20 || ct.Status != "working" {
-		t.Errorf("contract escrow=%d status=%s (want working)", ct.Escrow, ct.Status)
+	if ct.Escrow != quote || ct.Status != "working" {
+		t.Errorf("contract escrow=%d status=%s (want working, escrow=%d)", ct.Escrow, ct.Status, quote)
 	}
 	// worker Alice 忙碌到 ReadyAt（不能立刻接新单）
 	if !time.Now().Before(w.Agents[2].BusyUntil) {
@@ -73,6 +75,7 @@ func TestSettleContractsEscrow(t *testing.T) {
 		t.Fatal("hire should succeed")
 	}
 	ct := w.Contracts[0]
+	quote := ct.Escrow // M6.4 动态报价
 	// 到期前：不结算（仍 working）
 	w.SettleContracts(ct.CreatedAt) // now = 创建时刻 < ReadyAt
 	if ct.Status != "working" {
@@ -88,11 +91,11 @@ func TestSettleContractsEscrow(t *testing.T) {
 	if total != 150 {
 		t.Errorf("total wealth should stay 150, got %d", total)
 	}
-	if ct.Status == "completed" && w.Agents[2].Balance != 70 {
-		t.Errorf("Alice should get 20 on success, got %d", w.Agents[2].Balance)
+	if ct.Status == "completed" && w.Agents[2].Balance != 50+quote {
+		t.Errorf("Alice should get %d on success, got %d", quote, w.Agents[2].Balance)
 	}
 	if ct.Status == "failed" && w.Agents[1].Balance != 100 {
-		t.Errorf("Bob should get refund on failure, got %d", w.Agents[1].Balance)
+		t.Errorf("Bob should get full refund on failure, got %d", w.Agents[1].Balance)
 	}
 	_ = contractID
 }
@@ -193,6 +196,32 @@ func TestWorkerCompetition(t *testing.T) {
 		if svc.Workers[len(svc.Workers)-1].Name != "BobLv1" {
 			t.Errorf("least reliable worker (Bob) should rank last, got %s", svc.Workers[len(svc.Workers)-1].Name)
 		}
+	}
+}
+
+// TestDynamicPricing 验证 M6.4：worker 独立报价随等级/声誉分化（高技能高声誉报价更高）。
+func TestDynamicPricing(t *testing.T) {
+	svc := &Service{ID: "repair_machine", Name: "Repair Machine", Skill: "engineer", MinLevel: 1, Price: 20}
+	w := &World{
+		Services: map[string]*Service{svc.ID: svc},
+	}
+	// 同一服务，不同 worker：低等级低声誉 vs 高等级高声誉
+	lowWorker := &Agent{ID: 1, Skills: []skill.AgentSkill{{SkillID: "engineer", Level: 1}}, Reputation: 20}
+	highWorker := &Agent{ID: 2, Skills: []skill.AgentSkill{{SkillID: "engineer", Level: 7}}, Reputation: 95}
+	// 需求高、worker 少（供不应求）
+	low := w.workerQuote(svc, lowWorker, 500, 2)
+	high := w.workerQuote(svc, highWorker, 500, 2)
+	if low >= high {
+		t.Errorf("high-level/reputable worker should cost more: low=%d high=%d", low, high)
+	}
+	// 高声誉高等级 worker 报价应明显高于基础价
+	if high <= 20 {
+		t.Errorf("high-level worker quote should exceed base price, got %d", high)
+	}
+	// 供过于求时报价下降（worker 多、需求低）
+	crowded := w.workerQuote(svc, highWorker, 5, 20)
+	if crowded >= high {
+		t.Errorf("oversupply should lower quote: crowded=%d high=%d", crowded, high)
 	}
 }
 

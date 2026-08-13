@@ -52,7 +52,7 @@ export interface WorkerOffer {
   skillLevel: number
   successRate: number
   reputation: number
-  price: number
+  price: number    // M6.4 该 worker 独立报价（随等级/声誉/供需动态）
 }
 
 export interface ServiceOffer {
@@ -60,9 +60,9 @@ export interface ServiceOffer {
   name: string
   skill: string
   minLevel: number
-  price: number
+  price: number    // 基础价（各 worker 报价以此为基础浮动）
   availableWorkers: number
-  workers: WorkerOffer[]   // M6.3 可雇 worker 排名（含声誉）
+  workers: WorkerOffer[]   // M6.3 可雇 worker 排名（含声誉）；M6.4 每 worker 独立报价
 }
 
 export interface ContractView {

@@ -324,23 +324,24 @@ func (p *planner) evaluateHireOption(v *economy.Perception, skillID string) *Eco
 	skillPrice := p.skills.PriceOf(skillID)
 	// 该技能当前可做的最高档工作收益（雇人后雇主能得到多少）
 	jobReward := p.bestRewardForSkill(v, skillID)
-	// M6.3 Worker Competition：在多个可雇 worker 之间比较，选期望价值最高的。
-	// 期望价值 = 成功率×(服务收益) - 失败率×(声誉损失/风险) + 声誉信任加成
-	// 可靠 worker（高成功率/声誉）即便价格不便宜，期望价值也可能更高；
-	// 便宜但易失败的 worker 期望价值低。市场对"可靠性"定价。
+	// M6.3 Worker Competition + M6.4 Dynamic Pricing：
+	// 在多个 worker 之间比较（每个有独立报价），选期望价值最高的。
+	// 期望价值 = 成功率×(服务收益) - 失败率×(报价) + 声誉信任加成
+	// 高等级/高声誉 worker 报价高但可靠；低等级/低声誉 worker 便宜但易失败。
+	// Planner 自己权衡"贵可靠 vs 便宜易败"。
 	var best economy.WorkerOffer
 	bestVal := -1e9
 	for _, wk := range workers {
-		// 付不起该服务费 → 该 worker 选项整体不可行（先记下，仍可比较）
-		if v.Balance < svc.Price {
+		// 付不起该 worker 的报价 → 该选项不可行
+		if v.Balance < wk.Price {
 			continue
 		}
 		rate := wk.SuccessRate
 		if rate <= 0 {
 			rate = economy.SkillSuccessRate(wk.SkillLevel) // 无历史记录 → 用技能等级估算成功率
 		}
-		// 期望收益：成功拿 jobReward，失败则服务费打水漂（还要承担风险）
-		expected := rate*float64(jobReward) - (1-rate)*float64(svc.Price)
+		// 期望价值：成功拿 jobReward，失败则报价打水漂（还要承担风险）
+		expected := rate*float64(jobReward) - (1-rate)*float64(wk.Price)
 		// 声誉信任加成：每点声誉微小加分（声誉高 = 更可信）
 		trust := float64(wk.Reputation) / 100.0 * float64(jobReward) * 0.1
 		val := expected + trust
@@ -353,13 +354,14 @@ func (p *planner) evaluateHireOption(v *economy.Perception, skillID string) *Eco
 		return nil // 付不起任何 worker
 	}
 	worker := best.AgentID
+	hireCost := best.Price
 	rate := best.SuccessRate
 	if rate <= 0 {
 		rate = economy.SkillSuccessRate(best.SkillLevel)
 	}
 	// 整体风险：服务费占余额比例 + worker 成功率
 	risk := "Low"
-	affordRatio := float64(svc.Price) / float64(v.Balance+1)
+	affordRatio := float64(hireCost) / float64(v.Balance+1)
 	switch {
 	case affordRatio > 0.5:
 		risk = "High"
@@ -376,8 +378,8 @@ func (p *planner) evaluateHireOption(v *economy.Perception, skillID string) *Eco
 	}
 	// 统一评分：付得起 + 服务性价比 + 比买技能划算 + 低风险 + 选到可靠 worker
 	score := 0.25 // 付得起（能走到这里）
-	if jobReward > 0 && svc.Price > 0 {
-		ratio := float64(jobReward) / float64(svc.Price)
+	if jobReward > 0 && hireCost > 0 {
+		ratio := float64(jobReward) / float64(hireCost)
 		if ratio >= 1.5 {
 			score += 0.3
 		} else if ratio >= 1.0 {
@@ -386,7 +388,7 @@ func (p *planner) evaluateHireOption(v *economy.Perception, skillID string) *Eco
 			score += 0.05
 		}
 	}
-	if skillPrice > 0 && svc.Price*3 < skillPrice {
+	if skillPrice > 0 && hireCost*3 < skillPrice {
 		score += 0.15
 	}
 	switch risk {
@@ -401,9 +403,9 @@ func (p *planner) evaluateHireOption(v *economy.Perception, skillID string) *Eco
 		score += float64(best.Reputation) / 100.0 * 0.1
 	}
 	score += p.riskTolerance(v) * 0.5
-	reason := fmt.Sprintf("雇 %s(%s Lv%d, 成功率%.0f%%, 声誉%d) 做 %s，托管 %d coins",
-		workerName(v, worker), skillID, best.SkillLevel, rate*100, best.Reputation, svc.Name, svc.Price)
-	return &EconomicOption{Action: "hire_agent", Cost: svc.Price,
+	reason := fmt.Sprintf("雇 %s(%s Lv%d, 成功率%.0f%%, 声誉%d, 报价%d) 做 %s，托管 %d coins",
+		workerName(v, worker), skillID, best.SkillLevel, rate*100, best.Reputation, hireCost, svc.Name, hireCost)
+	return &EconomicOption{Action: "hire_agent", Cost: hireCost,
 		Reward: jobReward, Future: 0, Risk: risk, Score: score,
 		Target: worker, Content: svc.ID, Reason: reason}
 }

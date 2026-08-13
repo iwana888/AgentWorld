@@ -34,7 +34,7 @@
           <span class="svc-workers" :class="{ scarce: s.availableWorkers <= 2 }">
             {{ s.availableWorkers }} 人
           </span>
-          <span class="svc-price">{{ s.price }}</span>
+          <span class="svc-price" :title="'基础价 ' + s.price">₿{{ s.price }}</span>
         </div>
         <!-- Worker 排名：可靠性优先 -->
         <div v-if="s.workers && s.workers.length" class="svc-workers-list">
@@ -43,6 +43,7 @@
             <span class="wk-lv">Lv{{ wk.skillLevel }}</span>
             <span class="wk-rate" :class="rateClass(wk.successRate)">{{ pct(wk.successRate) }}</span>
             <span class="wk-rep" :class="repClass(wk.reputation)">♛{{ wk.reputation }}</span>
+            <span class="wk-price" :class="priceClass(wk, s)">{{ wk.price }}</span>
           </div>
         </div>
       </div>
@@ -98,6 +99,12 @@ function rateClass(r: number) {
 function repClass(r: number) {
   return r >= 80 ? 'good' : r >= 50 ? 'mid' : 'bad'
 }
+// M6.4 价格对比：该 worker 报价 vs 服务基础价（高溢价 → 黄/红）
+function priceClass(wk: WorkerOffer, s: any) {
+  const base = s.price || 1
+  const ratio = wk.price / base
+  return ratio > 1.3 ? 'high' : ratio > 1.1 ? 'mid' : ''
+}
 </script>
 
 <style scoped>
@@ -132,6 +139,10 @@ function repClass(r: number) {
 .wk-rep.good { color: #ffd166; }
 .wk-rep.mid { color: #e5c07b; }
 .wk-rep.bad { color: #ff7b72; }
+/* M6.4 独立报价 */
+.wk-price { width: 30px; text-align: right; flex-shrink: 0; color: #7cc3ff; font-weight: 700; }
+.wk-price.high { color: #ffd166; }
+.wk-price.mid { color: #e5c07b; }
 .lm-contracts { display: flex; flex-direction: column; gap: 3px; flex: 1; min-height: 0; overflow-y: auto; }
 .ct-item { display: flex; align-items: center; gap: 4px; padding: 3px 6px; font-size: 10px; color: #c6d0e8; background: #161d33; border-radius: 6px; }
 .ct-status { flex-shrink: 0; }

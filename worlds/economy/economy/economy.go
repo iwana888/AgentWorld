@@ -393,6 +393,32 @@ type ServiceOffer struct {
 	Workers          []WorkerOffer `json:"workers"`          // M6.3 可雇 worker 列表（含信誉，供选择）
 }
 
+// workerQuote M6.4 Dynamic Pricing：计算某 worker 提供某服务的独立报价。
+// 报价 = 基础价 × (1 + 等级溢价 + 声誉溢价) × 供需系数
+//   - 等级溢价：Lv1~Lv7 → 0 ~ +0.5（高等级能提供更可靠服务，要价更高）
+//   - 声誉溢价：0~100 → 0 ~ +0.3（高信誉值得溢价）
+//   - 供需系数：该技能 worker 越少、需求越高 → 溢价；竞争多 → 打折
+// 这形成"Lv7 贵 + 可靠" vs "Lv1 便宜 + 易失败"的市场分层。
+func (w *World) workerQuote(svc *Service, worker *Agent, demand int64, workerCount int) int64 {
+	levelPrem := 0.5 * float64(worker.SkillLevel(svc.Skill)) / 7.0
+	repPrem := 0.3 * float64(worker.Reputation) / 100.0
+	// 供需：需求/worker 比（>1 供不应求涨价，<1 竞争激烈降价）
+	supplyFactor := 1.0
+	if workerCount > 0 {
+		ratio := float64(demand) / (float64(workerCount) * 10.0)
+		if ratio > 1.5 {
+			supplyFactor = 1.25 // 供不应求，涨 25%
+		} else if ratio < 0.5 {
+			supplyFactor = 0.85 // 竞争激烈，降 15%
+		}
+	}
+	price := float64(svc.Price) * (1 + levelPrem + repPrem) * supplyFactor
+	if price < float64(svc.Price)*0.5 {
+		price = float64(svc.Price) * 0.5 // 保底半价
+	}
+	return int64(price + 0.5)
+}
+
 // LaborMarket 返回劳动力市场的公开快照（供 Planner 感知 + 前端）。
 func (w *World) LaborMarket() []ServiceOffer {
 	w.mu.Lock()
@@ -402,21 +428,38 @@ func (w *World) LaborMarket() []ServiceOffer {
 
 // laborMarketLocked 无锁构建劳动力市场快照（调用方需持锁）。
 // M6.3：每个服务列出可雇 worker 的信誉/成功率/等级（排名），供 Planner 比较选择。
+// M6.4：每个 worker 有独立报价（workerQuote，随等级/声誉/供需动态）。
 func (w *World) laborMarketLocked() []ServiceOffer {
 	out := make([]ServiceOffer, 0, len(w.Services))
+	// 先统计每个技能的需求（开放工作总报酬）和 worker 数（供需）
+	demand := map[string]int64{}
+	workerCount := map[string]int{}
+	for _, j := range w.Jobs {
+		if j.Status == "open" {
+			demand[j.Skill] += j.Reward
+		}
+	}
+	for _, ag := range w.Agents {
+		for _, as := range ag.Skills {
+			if as.Level > 0 {
+				workerCount[as.SkillID]++
+			}
+		}
+	}
 	for _, s := range w.Services {
 		offer := ServiceOffer{
 			ID: s.ID, Name: s.Name, Skill: s.Skill, MinLevel: s.MinLevel, Price: s.Price,
 		}
-		// 列出拥有该技能的所有 worker（含信誉/成功率/等级）
+		// 列出拥有该技能的所有 worker（含信誉/成功率/等级 + M6.4 独立报价）
 		for _, ag := range w.Agents {
 			lv := ag.SkillLevel(s.Skill)
 			if lv <= 0 {
 				continue
 			}
+			price := w.workerQuote(s, ag, demand[s.Skill], workerCount[s.Skill])
 			offer.Workers = append(offer.Workers, WorkerOffer{
 				AgentID: ag.ID, Name: ag.Name, SkillLevel: lv,
-				SuccessRate: ag.SuccessRate(), Reputation: ag.Reputation, Price: s.Price,
+				SuccessRate: ag.SuccessRate(), Reputation: ag.Reputation, Price: price,
 			})
 		}
 		offer.AvailableWorkers = len(offer.Workers)
@@ -454,8 +497,8 @@ func (w *World) HireAgent(employer, worker int64, serviceID string) (int64, bool
 		return 0, false // 不能雇自己
 	}
 	emp, ok := w.Agents[employer]
-	if !ok || emp.Balance < svc.Price {
-		return 0, false // 雇主余额不足
+	if !ok {
+		return 0, false
 	}
 	wrk, ok := w.Agents[worker]
 	if !ok {
@@ -469,9 +512,14 @@ func (w *World) HireAgent(employer, worker int64, serviceID string) (int64, bool
 	if lv < svc.MinLevel {
 		return 0, false // worker 没有该技能或等级不够
 	}
+	// M6.4：按 worker 独立报价扣款（随等级/声誉/供需动态）
+	price := w.workerQuoteLocked(svc, wrk)
+	if emp.Balance < price {
+		return 0, false // 雇主余额不足（付不起该 worker 的报价）
+	}
 	// Escrow：从雇主扣款锁进合约
-	emp.Balance -= svc.Price
-	emp.TotalSpent += svc.Price
+	emp.Balance -= price
+	emp.TotalSpent += price
 	now := time.Now()
 	dur := svc.Duration
 	if dur <= 0 {
@@ -479,8 +527,8 @@ func (w *World) HireAgent(employer, worker int64, serviceID string) (int64, bool
 	}
 	ct := &Contract{
 		ID: w.nextContractID, Employer: employer, Worker: worker,
-		Service: svc.Name, Price: svc.Price, Status: "working",
-		CreatedAt: now, StartedAt: now, ReadyAt: now.Add(dur), Escrow: svc.Price,
+		Service: svc.Name, Price: price, Status: "working",
+		CreatedAt: now, StartedAt: now, ReadyAt: now.Add(dur), Escrow: price,
 	}
 	w.nextContractID++
 	w.Contracts = append(w.Contracts, ct)
@@ -492,9 +540,27 @@ func (w *World) HireAgent(employer, worker int64, serviceID string) (int64, bool
 	w.touchVersionLocked()
 	w.obs.Publish("contract.created", map[string]interface{}{
 		"id": ct.ID, "employer": employer, "worker": worker, "service": svc.Name,
-		"price": svc.Price, "readyIn": int(dur.Seconds()),
+		"price": price, "readyIn": int(dur.Seconds()),
 	})
 	return ct.ID, true
+}
+
+// workerQuoteLocked 计算某 worker 的独立报价（M6.4，调用方需持锁）。
+// 复用 workerQuote，但统计供需时需要遍历世界状态。
+func (w *World) workerQuoteLocked(svc *Service, worker *Agent) int64 {
+	demand := int64(0)
+	for _, j := range w.Jobs {
+		if j.Status == "open" && j.Skill == svc.Skill {
+			demand += j.Reward
+		}
+	}
+	count := 0
+	for _, ag := range w.Agents {
+		if ag.SkillLevel(svc.Skill) > 0 {
+			count++
+		}
+	}
+	return w.workerQuote(svc, worker, demand, count)
 }
 
 // SettleContracts M6.2.1：结算所有到期的 working 合约（由 RoundTick 每 tick 调用）。
