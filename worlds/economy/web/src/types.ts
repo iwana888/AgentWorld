@@ -7,6 +7,11 @@ export interface AgentPublic {
   balance: number
   inventory: Record<string, number>
   skills: AgentSkill[]
+  // M6.3 职业信誉
+  reputation: number
+  completedContracts: number
+  failedContracts: number
+  successRate: number
 }
 
 export interface Transaction {
@@ -41,6 +46,15 @@ export interface SkillOffer {
 }
 
 // M6.1 劳动力市场
+export interface WorkerOffer {
+  agentID: number
+  name: string
+  skillLevel: number
+  successRate: number
+  reputation: number
+  price: number
+}
+
 export interface ServiceOffer {
   id: string
   name: string
@@ -48,6 +62,7 @@ export interface ServiceOffer {
   minLevel: number
   price: number
   availableWorkers: number
+  workers: WorkerOffer[]   // M6.3 可雇 worker 排名（含声誉）
 }
 
 export interface ContractView {
@@ -117,6 +132,11 @@ export interface InspectorData {
   skillInvested: number
   skillEarned: number
   skillReturn: number
+  // M6.3 职业信誉
+  reputation: number
+  completedContracts: number
+  failedContracts: number
+  successRate: number
 }
 
 // 技能 emoji / 标签

@@ -46,6 +46,38 @@ type Agent struct {
 	// M5 Skill Economy 实验指标：技能投资回报
 	SkillInvested int64 // 技能投资累计花费（买技能花的钱）
 	SkillEarned   int64 // 通过技能工作累计赚的钱（投资收益）
+	// M6.3 Reputation：职业信用，由实际合同结果驱动（成功+1 / 失败-2）。
+	// 注意：Reputation 不等于 Skill Level——Lv7 新手可能只有 50，Lv3 老手可能 95。
+	Reputation         int64 // 声誉分（0~100，越高越可信）
+	CompletedContracts int64 // 累计完成合约数
+	FailedContracts    int64 // 累计失败合约数
+}
+
+// SuccessRate 返回合约成功率（0~1）。
+func (a *Agent) SuccessRate() float64 {
+	total := a.CompletedContracts + a.FailedContracts
+	if total == 0 {
+		return 0
+	}
+	return float64(a.CompletedContracts) / float64(total)
+}
+
+// OnContractSettled M6.3：合同结算后更新职业信誉（成功+1 / 失败-2，钳制 0~100）。
+// 调用方需持锁。
+func (a *Agent) OnContractSettled(success bool) {
+	if success {
+		a.CompletedContracts++
+		a.Reputation += 1
+	} else {
+		a.FailedContracts++
+		a.Reputation -= 2
+	}
+	if a.Reputation < 0 {
+		a.Reputation = 0
+	}
+	if a.Reputation > 100 {
+		a.Reputation = 100
+	}
 }
 
 // SkillLevel 返回 Agent 对某技能的熟练度（0=未拥有）。

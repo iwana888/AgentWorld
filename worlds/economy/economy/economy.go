@@ -9,6 +9,7 @@ package economy
 
 import (
 	"math/rand"
+	"sort"
 	"time"
 
 	"agentworld/internal/skill"
@@ -115,7 +116,7 @@ func (w *World) DoJob(agentID, jobID int64) (int64, string) {
 				return 0, j.Title + "需要" + j.Skill + " Lv" + itoa(int64(j.MinLevel)) + "，我等级不够"
 			}
 			// M6.2.1 成功率随技能等级（与服务一致）
-			success := rand.Float64() < skillSuccessRate(skill)
+			success := rand.Float64() < SkillSuccessRate(skill)
 			if success {
 				j.Status = "done"
 				// M5.1 收益倍率：等级越高，同一份工作收入越高
@@ -370,6 +371,17 @@ func (w *World) skillMarketLocked() []SkillOffer {
 }
 
 // ServiceOffer 劳动力市场上可雇佣的一个服务（含该技能可用的 worker 视图）。
+// WorkerOffer M6.3：劳动力市场上一个可雇的 worker（含信誉/成功率/等级）。
+// 让 Planner 能在多个 worker 间比较（价格 × 成功率 × 声誉），形成真实的劳动市场竞争。
+type WorkerOffer struct {
+	AgentID     int64   `json:"agentID"`
+	Name        string  `json:"name"`
+	SkillLevel  int     `json:"skillLevel"`
+	SuccessRate float64 `json:"successRate"` // 0~1
+	Reputation  int64   `json:"reputation"`  // 0~100 职业信用
+	Price       int64   `json:"price"`       // 该服务固定价
+}
+
 type ServiceOffer struct {
 	ID       string `json:"id"`
 	Name     string `json:"name"`
@@ -377,7 +389,8 @@ type ServiceOffer struct {
 	MinLevel int    `json:"minLevel"`
 	Price    int64  `json:"price"` // 固定服务价格
 	// 可用 worker 统计（谁有能力提供服务）
-	AvailableWorkers int `json:"availableWorkers"` // 拥有该技能的 Agent 数
+	AvailableWorkers int           `json:"availableWorkers"` // 拥有该技能的 Agent 数
+	Workers          []WorkerOffer `json:"workers"`          // M6.3 可雇 worker 列表（含信誉，供选择）
 }
 
 // LaborMarket 返回劳动力市场的公开快照（供 Planner 感知 + 前端）。
@@ -388,22 +401,37 @@ func (w *World) LaborMarket() []ServiceOffer {
 }
 
 // laborMarketLocked 无锁构建劳动力市场快照（调用方需持锁）。
+// M6.3：每个服务列出可雇 worker 的信誉/成功率/等级（排名），供 Planner 比较选择。
 func (w *World) laborMarketLocked() []ServiceOffer {
 	out := make([]ServiceOffer, 0, len(w.Services))
-	// 统计每个技能拥有者数（可用 worker）
-	workers := map[string]int{}
-	for _, ag := range w.Agents {
-		for _, as := range ag.Skills {
-			if as.Level > 0 {
-				workers[as.SkillID]++
-			}
-		}
-	}
 	for _, s := range w.Services {
-		out = append(out, ServiceOffer{
+		offer := ServiceOffer{
 			ID: s.ID, Name: s.Name, Skill: s.Skill, MinLevel: s.MinLevel, Price: s.Price,
-			AvailableWorkers: workers[s.Skill],
+		}
+		// 列出拥有该技能的所有 worker（含信誉/成功率/等级）
+		for _, ag := range w.Agents {
+			lv := ag.SkillLevel(s.Skill)
+			if lv <= 0 {
+				continue
+			}
+			offer.Workers = append(offer.Workers, WorkerOffer{
+				AgentID: ag.ID, Name: ag.Name, SkillLevel: lv,
+				SuccessRate: ag.SuccessRate(), Reputation: ag.Reputation, Price: s.Price,
+			})
+		}
+		offer.AvailableWorkers = len(offer.Workers)
+		// 按（成功率降序、声誉降序、等级降序）排序：更可靠的 worker 排前面
+		sort.Slice(offer.Workers, func(i, j int) bool {
+			ri, rj := offer.Workers[i], offer.Workers[j]
+			if ri.SuccessRate != rj.SuccessRate {
+				return ri.SuccessRate > rj.SuccessRate
+			}
+			if ri.Reputation != rj.Reputation {
+				return ri.Reputation > rj.Reputation
+			}
+			return ri.SkillLevel > rj.SkillLevel
 		})
+		out = append(out, offer)
 	}
 	return out
 }
@@ -492,7 +520,7 @@ func (w *World) SettleContracts(now time.Time) int {
 		svcSkill := w.contractSkillLocked(ct.Service)
 		lv := wrk.SkillLevel(svcSkill)
 		// M6.2.1 成功率随技能等级（Lv1~60% / Lv3~73% / Lv5~85% / Lv7~97%）
-		success := rand.Float64() < skillSuccessRate(lv)
+		success := rand.Float64() < SkillSuccessRate(lv)
 		if success {
 			ct.Status = "completed"
 			// Escrow 释放给 worker
@@ -500,16 +528,30 @@ func (w *World) SettleContracts(now time.Time) int {
 			if a, ok := w.Agents[ct.Worker]; ok {
 				a.SkillEarned += ct.Escrow
 				a.UpgradeSkill(svcSkill) // worker 通过服务升级技能
+				a.OnContractSettled(true) // M6.3：成功 → 声誉 +1
 			}
 			w.obs.Publish("contract.completed", map[string]interface{}{
-				"id": ct.ID, "employer": ct.Employer, "worker": ct.Worker, "service": ct.Service, "price": ct.Escrow,
+				"id": ct.ID, "employer": ct.Employer, "worker": ct.Worker, "service": ct.Service,
+				"price": ct.Escrow, "reputation": w.Agents[ct.Worker].Reputation,
+			})
+			w.obs.Publish("reputation.change", map[string]interface{}{
+				"agent": ct.Worker, "name": w.Agents[ct.Worker].Name,
+				"reputation": w.Agents[ct.Worker].Reputation, "delta": 1,
 			})
 		} else {
 			ct.Status = "failed"
 			// 失败：Escrow 退回雇主
 			w.transferLocked(0, ct.Employer, ct.Escrow, "contract-refund", ct.Service+"退款")
+			if a, ok := w.Agents[ct.Worker]; ok {
+				a.OnContractSettled(false) // M6.3：失败 → 声誉 -2
+			}
 			w.obs.Publish("contract.failed", map[string]interface{}{
-				"id": ct.ID, "employer": ct.Employer, "worker": ct.Worker, "service": ct.Service, "refund": ct.Escrow,
+				"id": ct.ID, "employer": ct.Employer, "worker": ct.Worker, "service": ct.Service,
+				"refund": ct.Escrow, "reputation": w.Agents[ct.Worker].Reputation,
+			})
+			w.obs.Publish("reputation.change", map[string]interface{}{
+				"agent": ct.Worker, "name": w.Agents[ct.Worker].Name,
+				"reputation": w.Agents[ct.Worker].Reputation, "delta": -2,
 			})
 		}
 	}
@@ -550,11 +592,12 @@ func (w *World) contractSkillLocked(serviceName string) string {
 	return ""
 }
 
-// skillSuccessRate M6.2.1：技能等级 → 服务/工作成功率（更陡峭，高等级明显更可靠）。
+// SkillSuccessRate M6.2.1：技能等级 → 服务/工作成功率（更陡峭，高等级明显更可靠）。
 //   Lv1≈60%  Lv3≈73%  Lv5≈85%  Lv7≈97%
 // 相比旧的 0.3+0.5*Lv/7（Lv1≈37%），高等级 worker 的可靠性优势更明显，
 // 让"便宜低技能 worker"与"贵高技能 worker"形成真实取舍。
-func skillSuccessRate(level int) float64 {
+// 导出供 Planner（module.go）用技能等级估算成功率。
+func SkillSuccessRate(level int) float64 {
 	if level <= 0 {
 		return 0.3
 	}
@@ -750,6 +793,11 @@ type AgentPublic struct {
 	Balance    int64            `json:"balance"`
 	Inventory  map[string]int   `json:"inventory"`
 	Skills     []skill.AgentSkill `json:"skills"`
+	// M6.3 职业信誉
+	Reputation         int64   `json:"reputation"`
+	CompletedContracts int64   `json:"completedContracts"`
+	FailedContracts    int64   `json:"failedContracts"`
+	SuccessRate        float64 `json:"successRate"`
 }
 
 // JobPublic 公开工作信息。
@@ -791,6 +839,8 @@ func (w *World) snapshotLocked() *PublicSnapshot {
 		snap.Agents = append(snap.Agents, AgentPublic{
 			ID: a.ID, Name: a.Name, Profession: a.Profession, Balance: a.Balance, Inventory: inv,
 			Skills: a.Skills,
+			Reputation: a.Reputation, CompletedContracts: a.CompletedContracts,
+			FailedContracts: a.FailedContracts, SuccessRate: a.SuccessRate(),
 		})
 	}
 	for _, j := range w.Jobs {
@@ -877,6 +927,9 @@ func (w *World) Inspector(id int64) map[string]interface{} {
 		// M5 技能投资指标
 		"skillInvested": a.SkillInvested, "skillEarned": a.SkillEarned,
 		"skillReturn": a.SkillEarned - a.SkillInvested,
+		// M6.3 职业信誉
+		"reputation": a.Reputation, "completedContracts": a.CompletedContracts,
+		"failedContracts": a.FailedContracts, "successRate": a.SuccessRate(),
 	}
 }
 

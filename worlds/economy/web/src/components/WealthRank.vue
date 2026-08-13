@@ -13,6 +13,7 @@
         <el-progress :percentage="wealthPct(a.balance)" :stroke-width="6" :show-text="false"
           class="rank-bar" :color="barColor(i)" />
         <span v-if="skillCount(a) > 1" class="rank-skills" :title="skillNames(a)">🎓×{{ skillCount(a) }}</span>
+        <span v-if="a.reputation > 0" class="rank-rep" :title="'成功率 ' + Math.round((a.successRate||0)*100) + '%'">♛{{ a.reputation }}</span>
         <span class="rank-bal">{{ a.balance.toLocaleString() }}</span>
       </div>
     </div>
@@ -56,5 +57,6 @@ function skillNames(a: AgentPublic) {
 .rank-prof { color: #7a86a6; font-size: 11px; width: 52px; flex-shrink: 0; }
 .rank-bar { flex: 1; }
 .rank-skills { color: #b07ce0; font-size: 11px; flex-shrink: 0; }
+.rank-rep { color: #ffd166; font-size: 10px; flex-shrink: 0; font-weight: 700; }
 .rank-bal { color: #ffd166; font-size: 13px; font-weight: 700; width: 60px; text-align: right; flex-shrink: 0; font-variant-numeric: tabular-nums; }
 </style>

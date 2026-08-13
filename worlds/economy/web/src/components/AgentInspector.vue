@@ -34,6 +34,22 @@
         </div>
       </div>
 
+      <!-- M6.3 职业信誉 -->
+      <div class="row" v-if="inspector.reputation > 0 || (inspector.completedContracts || 0) > 0">
+        <div class="cell">
+          <div class="cell-label">♛ 职业信誉</div>
+          <div class="cell-value" :class="repClass(inspector.reputation)">{{ inspector.reputation || 0 }}</div>
+        </div>
+        <div class="cell">
+          <div class="cell-label">🤝 完成/失败</div>
+          <div class="cell-value">{{ inspector.completedContracts || 0 }} / {{ inspector.failedContracts || 0 }}</div>
+        </div>
+        <div class="cell">
+          <div class="cell-label">✅ 成功率</div>
+          <div class="cell-value" :class="rateClass(inspector.successRate)">{{ pct(inspector.successRate) }}</div>
+        </div>
+      </div>
+
       <div class="sec">
         <div class="sec-label">🎯 经济目标</div>
         <div class="sec-val">{{ inspector.goal }}</div>
@@ -154,6 +170,18 @@ function emoji(p: string) { return profEmoji(p) }
 function skillPct(level: number) { return Math.round((level / 7) * 100) }
 function skillColor(level: number) {
   return level >= 6 ? '#ffd166' : level >= 4 ? '#7cc3ff' : '#3d5278'
+}
+// M6.3 职业信誉展示
+function repClass(r: number) {
+  const v = r || 0
+  return v >= 80 ? 'green' : v >= 50 ? 'gold' : 'red'
+}
+function rateClass(r: number) {
+  const v = r || 0
+  return v >= 0.85 ? 'green' : v >= 0.7 ? 'gold' : 'red'
+}
+function pct(r: number) {
+  return Math.round((r || 0) * 100) + '%'
 }
 </script>
 

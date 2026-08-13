@@ -24,16 +24,27 @@
       </div>
     </div>
 
-    <!-- 服务市场 -->
+    <!-- 服务市场 + Worker 排名（M6.3 含声誉） -->
     <div class="lm-mkt-title">🛠️ 可雇佣服务</div>
     <div class="lm-services">
-      <div v-for="s in snapshot.services" :key="s.id" class="svc-row">
-        <span class="svc-emoji">{{ skillEmoji(s.skill) }}</span>
-        <span class="svc-name">{{ s.name }}</span>
-        <span class="svc-workers" :class="{ scarce: s.availableWorkers <= 2 }">
-          {{ s.availableWorkers }} 人
-        </span>
-        <span class="svc-price">{{ s.price }}</span>
+      <div v-for="s in snapshot.services" :key="s.id" class="svc-card">
+        <div class="svc-row">
+          <span class="svc-emoji">{{ skillEmoji(s.skill) }}</span>
+          <span class="svc-name">{{ s.name }}</span>
+          <span class="svc-workers" :class="{ scarce: s.availableWorkers <= 2 }">
+            {{ s.availableWorkers }} 人
+          </span>
+          <span class="svc-price">{{ s.price }}</span>
+        </div>
+        <!-- Worker 排名：可靠性优先 -->
+        <div v-if="s.workers && s.workers.length" class="svc-workers-list">
+          <div v-for="wk in topWorkers(s.workers)" :key="wk.agentID" class="worker-row">
+            <span class="wk-name">{{ wk.name }}</span>
+            <span class="wk-lv">Lv{{ wk.skillLevel }}</span>
+            <span class="wk-rate" :class="rateClass(wk.successRate)">{{ pct(wk.successRate) }}</span>
+            <span class="wk-rep" :class="repClass(wk.reputation)">♛{{ wk.reputation }}</span>
+          </div>
+        </div>
       </div>
       <div v-if="!snapshot.services.length" class="lm-empty">暂无服务市场数据…</div>
     </div>
@@ -58,7 +69,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { skillEmoji } from '../types'
-import type { GameSnapshot, ContractView } from '../types'
+import type { GameSnapshot, ContractView, WorkerOffer } from '../types'
 
 const props = defineProps<{ snapshot: GameSnapshot }>()
 
@@ -74,6 +85,19 @@ function fmtVol(v: number) {
   if (v >= 1000) return (v / 1000).toFixed(1) + 'k'
   return String(v)
 }
+// M6.3 每个服务只展示 top 3 最可靠的 worker（排名已按成功率降序）
+function topWorkers(workers: WorkerOffer[]) {
+  return [...workers].slice(0, 3)
+}
+function pct(r: number) {
+  return Math.round(r * 100) + '%'
+}
+function rateClass(r: number) {
+  return r >= 0.85 ? 'good' : r >= 0.7 ? 'mid' : 'bad'
+}
+function repClass(r: number) {
+  return r >= 80 ? 'good' : r >= 50 ? 'mid' : 'bad'
+}
 </script>
 
 <style scoped>
@@ -88,12 +112,26 @@ function fmtVol(v: number) {
 .stat-label { font-size: 9px; color: #7a86a6; }
 .lm-mkt-title { color: #9fb3e8; font-size: 12px; font-weight: 700; margin: 6px 0 4px; }
 .lm-services { display: flex; flex-direction: column; gap: 3px; }
-.svc-row { display: flex; align-items: center; gap: 6px; padding: 4px 6px; font-size: 11px; color: #c6d0e8; background: #161d33; border-radius: 6px; }
+.svc-card { background: #161d33; border-radius: 6px; padding: 4px; }
+.svc-row { display: flex; align-items: center; gap: 6px; padding: 3px 6px; font-size: 11px; color: #c6d0e8; }
 .svc-emoji { flex-shrink: 0; }
 .svc-name { flex: 1; color: #e2e9ff; }
 .svc-workers { color: #7cc3ff; font-size: 10px; flex-shrink: 0; }
 .svc-workers.scarce { color: #ffd166; font-weight: 700; }
 .svc-price { color: #ffd166; font-weight: 700; flex-shrink: 0; }
+/* M6.3 Worker 排名 */
+.svc-workers-list { display: flex; flex-direction: column; gap: 1px; margin-top: 2px; border-top: 1px dashed #2a3550; padding-top: 2px; }
+.worker-row { display: flex; align-items: center; gap: 6px; padding: 1px 8px; font-size: 10px; color: #9aa6c5; }
+.wk-name { flex: 1; color: #c6d0e8; }
+.wk-lv { color: #7cc3ff; flex-shrink: 0; }
+.wk-rate { width: 36px; text-align: right; flex-shrink: 0; font-weight: 700; }
+.wk-rate.good { color: #9ee6b0; }
+.wk-rate.mid { color: #e5c07b; }
+.wk-rate.bad { color: #ff7b72; }
+.wk-rep { width: 36px; text-align: right; flex-shrink: 0; }
+.wk-rep.good { color: #ffd166; }
+.wk-rep.mid { color: #e5c07b; }
+.wk-rep.bad { color: #ff7b72; }
 .lm-contracts { display: flex; flex-direction: column; gap: 3px; flex: 1; min-height: 0; overflow-y: auto; }
 .ct-item { display: flex; align-items: center; gap: 4px; padding: 3px 6px; font-size: 10px; color: #c6d0e8; background: #161d33; border-radius: 6px; }
 .ct-status { flex-shrink: 0; }

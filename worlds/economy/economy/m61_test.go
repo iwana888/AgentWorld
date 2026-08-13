@@ -133,13 +133,76 @@ func TestLaborMarketView(t *testing.T) {
 	}
 }
 
+// TestReputation 验证 M6.3 声誉由合同结果驱动（成功+1/失败-2），且独立于技能等级。
+func TestReputation(t *testing.T) {
+	a := &Agent{Skills: []skill.AgentSkill{{SkillID: "engineer", Level: 7}}}
+	// Lv7 新手：声誉 0（技能等级 ≠ 声誉）
+	if a.Reputation != 0 {
+		t.Errorf("new Lv7 should start with reputation 0, got %d", a.Reputation)
+	}
+	// 多次成功 → 声誉上升
+	for i := 0; i < 10; i++ {
+		a.OnContractSettled(true)
+	}
+	if a.Reputation != 10 || a.CompletedContracts != 10 {
+		t.Errorf("after 10 success: rep=%d completed=%d", a.Reputation, a.CompletedContracts)
+	}
+	// 失败 → 声誉下降
+	a.OnContractSettled(false)
+	if a.Reputation != 8 || a.FailedContracts != 1 {
+		t.Errorf("after 1 fail: rep=%d failed=%d", a.Reputation, a.FailedContracts)
+	}
+	// 成功率
+	if a.SuccessRate() != 10.0/11.0 {
+		t.Errorf("success rate should be 10/11, got %v", a.SuccessRate())
+	}
+	// 声誉钳制 0~100
+	a.Reputation = 99
+	a.OnContractSettled(true)
+	if a.Reputation > 100 {
+		t.Errorf("reputation should cap at 100, got %d", a.Reputation)
+	}
+}
+
+// TestWorkerCompetition 验证 M6.3 劳动力市场 worker 按成功率/声誉排序（可靠性优先）。
+func TestWorkerCompetition(t *testing.T) {
+	w := &World{
+		Services: map[string]*Service{
+			"repair_machine": {ID: "repair_machine", Name: "Repair Machine", Skill: "engineer", MinLevel: 1, Price: 20},
+		},
+		Agents: map[int64]*Agent{
+			1: {ID: 1, Name: "BobLv1", Skills: []skill.AgentSkill{{SkillID: "engineer", Level: 1}}, Reputation: 30, FailedContracts: 10, CompletedContracts: 5},
+			2: {ID: 2, Name: "AliceLv7", Skills: []skill.AgentSkill{{SkillID: "engineer", Level: 7}}, Reputation: 90, CompletedContracts: 40, FailedContracts: 1},
+			3: {ID: 3, Name: "CharlieLv5", Skills: []skill.AgentSkill{{SkillID: "engineer", Level: 5}}, Reputation: 70, CompletedContracts: 20, FailedContracts: 3},
+		},
+	}
+	// laborMarketLocked 返回的服务里，workers 应按成功率降序排列
+	market := w.LaborMarket()
+	for _, svc := range market {
+		if svc.ID != "repair_machine" {
+			continue
+		}
+		if len(svc.Workers) != 3 {
+			t.Fatalf("expected 3 workers, got %d", len(svc.Workers))
+		}
+		// Alice Lv7 成功率最高，应排第一
+		if svc.Workers[0].Name != "AliceLv7" {
+			t.Errorf("most reliable worker (Alice) should rank first, got %s", svc.Workers[0].Name)
+		}
+		// Bob Lv1 成功率最低，应排最后
+		if svc.Workers[len(svc.Workers)-1].Name != "BobLv1" {
+			t.Errorf("least reliable worker (Bob) should rank last, got %s", svc.Workers[len(svc.Workers)-1].Name)
+		}
+	}
+}
+
 // TestSkillSuccessRate 验证成功率随技能等级提高（M6.2.1）。
 func TestSkillSuccessRate(t *testing.T) {
-	if skillSuccessRate(1) >= skillSuccessRate(7) {
+	if SkillSuccessRate(1) >= SkillSuccessRate(7) {
 		t.Error("Lv7 should be more reliable than Lv1")
 	}
 	// Lv7 接近 97%
-	if skillSuccessRate(7) < 0.9 {
-		t.Errorf("Lv7 success rate should be high, got %v", skillSuccessRate(7))
+	if SkillSuccessRate(7) < 0.9 {
+		t.Errorf("Lv7 success rate should be high, got %v", SkillSuccessRate(7))
 	}
 }

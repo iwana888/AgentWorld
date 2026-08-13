@@ -27,8 +27,9 @@ type Perception struct {
 	// Agent 基于"当前能力 + 市场机会"评估是否做技能投资。
 	Market      []SkillOffer
 	// M6.1 Labor Market：可雇佣的服务 + 各技能可用的 worker。
-	Services    []ServiceOffer    // 服务市场（价格/所需技能/可用 worker 数）
+	Services    []ServiceOffer    // 服务市场（价格/所需技能/可用 worker 数/Worker 排名）
 	WorkersBySkill map[string][]int64 // 技能 → 拥有该技能的 Agent ID 列表（供 hire）
+	WorkerInfo map[string][]WorkerOffer // M6.3 技能 → 可雇 worker 完整信息（声誉/成功率/等级）
 	Names       map[int64]string  // Agent ID → 名字（供 Why 展示 hire 的 worker）
 	// 市场机会
 	OpenJobs    []JobPublic
@@ -135,6 +136,7 @@ func (w *World) BuildPerception(agentID int64) *Perception {
 	// M6.1 Labor Market：注入可雇佣的服务 + 各技能可用的 worker（供 hire_agent 决策）。
 	p.Services = w.laborMarketLocked()
 	p.WorkersBySkill = map[string][]int64{}
+	p.WorkerInfo = map[string][]WorkerOffer{}
 	p.Names = map[int64]string{}
 	for _, ag := range w.Agents {
 		p.Names[ag.ID] = ag.Name
@@ -142,6 +144,12 @@ func (w *World) BuildPerception(agentID int64) *Perception {
 			if as.Level > 0 {
 				p.WorkersBySkill[as.SkillID] = append(p.WorkersBySkill[as.SkillID], ag.ID)
 			}
+		}
+	}
+	// M6.3：从 Services 的 worker 排名复制 WorkerInfo（含声誉/成功率，供 Planner 比较选择）
+	for _, svc := range p.Services {
+		if _, ok := p.WorkerInfo[svc.Skill]; !ok {
+			p.WorkerInfo[svc.Skill] = svc.Workers
 		}
 	}
 	// M6.2.1 行动冷却：当前 Agent 是否忙碌（正在做工作/提供服务）
