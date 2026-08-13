@@ -194,15 +194,35 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
-	id, token, ok := s.mod.Game().RegisterHuman(req.Name, req.Password)
-	if !ok {
-		http.Error(w, "register failed (name taken or invalid)", http.StatusConflict)
+	id, token, code := s.mod.Game().RegisterHuman(req.Name, req.Password)
+	if code != "ok" {
+		// 返回具体原因，前端提示（limit = 注册上限已满）
+		status := http.StatusConflict
+		if code == "limit" {
+			status = http.StatusForbidden // 403：注册已满，防攻击
+		}
+		writeJSON(w, map[string]interface{}{"code": code, "error": registerErrMsg(code)})
+		w.WriteHeader(status)
 		return
 	}
 	writeJSON(w, map[string]interface{}{
 		"token": token, "agent_id": id, "name": req.Name, "kind": "human",
-		"balance": 100,
+		"balance": 100, "max_humans": s.mod.MaxHumans(),
 	})
+}
+
+// registerErrMsg 注册失败原因的中文提示。
+func registerErrMsg(code string) string {
+	switch code {
+	case "limit":
+		return "注册用户已达上限，暂时无法注册"
+	case "duplicate":
+		return "该用户名已被注册"
+	case "invalid":
+		return "用户名不能为空，密码至少 4 位"
+	default:
+		return "注册失败"
+	}
 }
 
 // handleLogin POST /api/auth/login —— Human 登录。

@@ -112,7 +112,7 @@ async function register() {
   })
   const data = await res.json()
   if (data.token) { token = data.token; localStorage.setItem('eco_human_token', token); ElMessage.success('注册成功'); await refreshMe() }
-  else ElMessage.error('注册失败')
+  else ElMessage.error(data.error || '注册失败')
 }
 async function login() {
   const res = await fetch('api/auth/login', {

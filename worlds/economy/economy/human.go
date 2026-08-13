@@ -10,25 +10,53 @@ package economy
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"os"
+	"strconv"
 	"strings"
 
 	"agentworld/internal/skill"
 )
 
+// maxHumans 注册用户上限（上云防批量注册攻击）。
+// 通过 ECO_MAX_HUMANS 环境变量可调，默认 100。
+var maxHumans = func() int {
+	if v := os.Getenv("ECO_MAX_HUMANS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	return 100
+}()
+
+// MaxHumans 返回注册用户上限（供 API 层展示/校验）。
+func MaxHumans() int { return maxHumans }
+
 // RegisterHuman M7：注册一个 Human Agent。
 //   - Kind=human，不进入 Scheduler 自动唤醒（scheduler 已排除 human）
 //   - 初始：Balance=100，基础技能 Courier Lv1（不让 Human 初始拥有高级技能）
-//   - 返回 (agentID, token, 是否成功)
-func (w *World) RegisterHuman(name, password string) (int64, string, bool) {
+//   - 安全（上云）：用户数超上限(默认100)拒绝；密码最少 4 位
+//   - 返回 (agentID, token, code)；code 区分失败原因：
+//       "ok" / "invalid"(空名或密码过短) / "limit"(注册上限已满) / "duplicate"(重名)
+func (w *World) RegisterHuman(name, password string) (int64, string, string) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	if name == "" || password == "" {
-		return 0, "", false
+	if name == "" || len(password) < 4 {
+		return 0, "", "invalid" // 空名 / 密码过短
+	}
+	// 注册上限保护：已有 human 数 >= 上限 → 拒绝（防批量注册攻击）
+	humanCount := 0
+	for _, a := range w.Agents {
+		if a.Kind == "human" {
+			humanCount++
+		}
+	}
+	if humanCount >= maxHumans {
+		return 0, "", "limit" // 达到注册上限
 	}
 	// 名字唯一
 	for _, a := range w.Agents {
 		if a.Kind == "human" && a.Name == name {
-			return 0, "", false // 已存在同名 human
+			return 0, "", "duplicate" // 已存在同名 human
 		}
 	}
 	id := w.nextAgent
@@ -51,7 +79,7 @@ func (w *World) RegisterHuman(name, password string) (int64, string, bool) {
 	w.obs.Publish("human.join", map[string]interface{}{"agent": id, "name": name})
 	token := newToken()
 	w.tokens[token] = id
-	return id, token, true
+	return id, token, "ok"
 }
 
 // LoginHuman M7：Human 登录，验证密码并签发 token。

@@ -43,6 +43,9 @@ func New(agentIDs []int64, names []string, personalities []string, obs *goose.Ob
 // Game 返回世界（供 server 访问）。
 func (m *Module) Game() *economy.World { return m.world }
 
+// MaxHumans 返回注册用户上限（M7 上云防攻击）。
+func (m *Module) MaxHumans() int { return economy.MaxHumans() }
+
 func (m *Module) Name() string { return "economy" }
 
 func (m *Module) Perceive(ctx context.Context, a sdk.Agent) (sdk.Perception, error) {

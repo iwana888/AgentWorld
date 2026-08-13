@@ -37,6 +37,7 @@ VOLUME ["/data"]
 ENV ECO_DB=/data/economy.db \
     ECO_OBS_ADDR=:19100 \
     ECO_INTERVAL=5s \
-    ECO_TICK=8s
+    ECO_TICK=8s \
+    ECO_MAX_HUMANS=100
 EXPOSE 19100
 CMD ["/app/economy"]

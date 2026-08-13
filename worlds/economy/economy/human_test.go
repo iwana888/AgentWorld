@@ -1,6 +1,7 @@
 package economy
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -39,8 +40,8 @@ func (w *World) withSkillMarket() *World {
 // 修复：区分"已拥有/余额不足/无此技能"。
 func TestHumanBuySkillWithMarket(t *testing.T) {
 	w := newHumanWorld().withSkillMarket()
-	id, _, ok := w.RegisterHuman("Ouyang", "secret")
-	if !ok {
+	id, _, code := w.RegisterHuman("Ouyang", "secret")
+	if code != "ok" {
 		t.Fatal("register fail")
 	}
 	// 买 courier（已拥有 → 应提示已拥有，不扣钱）
@@ -87,8 +88,8 @@ func indexOfStr(s, sub string) int {
 // TestHumanRegisterLogin 验证 M7：注册 / 登录 / 鉴权。
 func TestHumanRegisterLogin(t *testing.T) {
 	w := newHumanWorld()
-	id, token, ok := w.RegisterHuman("Ouyang", "secret")
-	if !ok {
+	id, token, code := w.RegisterHuman("Ouyang", "secret")
+	if code != "ok" {
 		t.Fatal("register should succeed")
 	}
 	// Human Agent 属性
@@ -103,9 +104,9 @@ func TestHumanRegisterLogin(t *testing.T) {
 	if a.SkillLevel("engineer") != 0 {
 		t.Errorf("human should NOT have engineer initially")
 	}
-	// 同名重复注册失败
-	if _, _, ok := w.RegisterHuman("Ouyang", "x"); ok {
-		t.Error("duplicate name should fail")
+	// 同名重复注册失败（返回 duplicate）
+	if _, _, code := w.RegisterHuman("Ouyang", "secret2"); code != "duplicate" {
+		t.Error("duplicate name should fail with 'duplicate', got", code)
 	}
 	// token 鉴权
 	if aid, ok := w.AuthHuman(token); !ok || aid != id {
@@ -126,8 +127,8 @@ func TestHumanRegisterLogin(t *testing.T) {
 // TestHumanDoJob 验证 M7：Human 工作（复用 AI 的 DoJob 经济规则）。
 func TestHumanDoJob(t *testing.T) {
 	w := newHumanWorld()
-	id, _, ok := w.RegisterHuman("Ouyang", "secret")
-	if !ok {
+	id, _, code := w.RegisterHuman("Ouyang", "secret")
+	if code != "ok" {
 		t.Fatal("register fail")
 	}
 	// 场景 A：开放工作（open，无人认领）—— 用户真实场景，Human 应能 claim+do
@@ -155,8 +156,8 @@ func TestHumanDoJob(t *testing.T) {
 // TestHumanBuySkill 验证 M7：Human 买技能（复用 AI 的 BuySkill 含余额/扣款）。
 func TestHumanBuySkill(t *testing.T) {
 	w := newHumanWorld()
-	id, _, ok := w.RegisterHuman("Ouyang", "secret")
-	if !ok {
+	id, _, code := w.RegisterHuman("Ouyang", "secret")
+	if code != "ok" {
 		t.Fatal("register fail")
 	}
 	// 无技能市场注册表 → 买技能失败（Human 不能绕过经济）
@@ -171,8 +172,8 @@ func TestHumanBuySkill(t *testing.T) {
 // TestAIHireHuman 验证 M7 最重要验收：AI 能雇 Human，Human 获得收入。
 func TestAIHireHuman(t *testing.T) {
 	w := newHumanWorld()
-	humanID, _, ok := w.RegisterHuman("Ouyang", "secret")
-	if !ok {
+	humanID, _, code := w.RegisterHuman("Ouyang", "secret")
+	if code != "ok" {
 		t.Fatal("register fail")
 	}
 	// 服务市场：Courier 服务（Human 有 courier 技能）
@@ -200,4 +201,31 @@ func TestAIHireHuman(t *testing.T) {
 		}
 	}
 	_ = contractID
+}
+
+// TestHumanLimit 验证 M7 上云安全：注册用户数超上限(默认100)后拒绝。
+func TestHumanLimit(t *testing.T) {
+	// 临时把上限调小（测试同包可访问 maxHumans）
+	old := maxHumans
+	maxHumans = 3
+	defer func() { maxHumans = old }()
+
+	w := newHumanWorld()
+	// 注册 3 个（达到上限）
+	for i := 0; i < 3; i++ {
+		_, _, code := w.RegisterHuman(fmt.Sprintf("User%d", i), "secret123")
+		if code != "ok" {
+			t.Fatalf("register %d should succeed, got %s", i, code)
+		}
+	}
+	// 第 4 个应被拒绝（limit）
+	_, _, code := w.RegisterHuman("User4", "secret123")
+	if code != "limit" {
+		t.Errorf("4th register should be rejected with 'limit', got %s", code)
+	}
+	// 密码过短 → invalid
+	_, _, code = w.RegisterHuman("UserX", "abc")
+	if code != "invalid" {
+		t.Errorf("short password should be 'invalid', got %s", code)
+	}
 }
