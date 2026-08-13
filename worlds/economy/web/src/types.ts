@@ -56,7 +56,8 @@ export interface ContractView {
   worker: number
   service: string
   price: number
-  status: string   // completed / failed / pending
+  status: string   // working / completed / failed
+  duration: number // 服务执行耗时（秒）
   createdAt: number
 }
 

@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"agentworld/internal/skill"
 	"agentworld/sdk"
@@ -147,6 +148,11 @@ type EconomicOption struct {
 }
 
 func (p *planner) decideEconomically(v *economy.Perception) *sdk.Decision {
+	// M6.2.1 行动冷却：正在忙（做工作/提供服务）→ 本轮不接新活，只观察等待。
+	// 阻断"无限连续 hire/do_job"的高速刷节奏。
+	if v.IsBusy {
+		return &sdk.Decision{Action: "idle", Reason: "我正在忙（还有约 " + itoaInt64(v.BusyRemain) + " 秒），忙完再说"}
+	}
 	// M6.2：当有"想做但缺技能"的工作机会，进入统一经济决策 —— 同时评估 Buy/Hire/Wait，
 	// 由 Planner 基于统一评分自主选择，不再用 1.2× 这类人工阈值替 Agent 写策略。
 	if missing := p.missingSkillOpportunity(v); missing != "" {
@@ -863,14 +869,16 @@ func (e *executor) Execute(ctx context.Context, rt sdk.Runtime, a sdk.Agent, per
 		}
 	case "hire_agent":
 		// M6.1 Labor Market：雇佣 worker（dec.Target）完成一个服务（dec.Content）。
-		// 简化：创建合约后本 tick 内立即由 worker 执行（领取即做，与 DoJob 一致）。
+		// M6.2.1：创建合约后进入 working，由 RoundTick 的 SettleContracts 到期结算
+		// （不再瞬间完成，阻断高速刷合约）。
 		contractID, ok := e.world.HireAgent(a.ID, dec.Target, dec.Content)
 		if !ok {
-			result = "雇佣失败（余额不足 / worker 不可用 / 无此服务）"
+			result = "雇佣失败（余额不足 / worker 忙 / 无此服务）"
 			break
 		}
-		_, msg := e.world.ExecuteContract(contractID)
-		result = "雇佣了 Agent#" + fmt.Sprintf("%d", dec.Target) + "： " + msg
+		dur := e.world.ContractDuration(contractID)
+		result = fmt.Sprintf("雇佣了 Agent#%d 做 %s，托管 %d coins，%s 后结算",
+			dec.Target, dec.Content, e.world.ContractPrice(contractID), dur.Round(time.Second))
 	case "consume":
 		if e.world.Consume(a.ID, dec.Content) {
 			result = "消费了 " + dec.Content

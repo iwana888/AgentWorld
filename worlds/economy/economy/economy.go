@@ -114,7 +114,8 @@ func (w *World) DoJob(agentID, jobID int64) (int64, string) {
 				j.ClaimedBy = 0
 				return 0, j.Title + "需要" + j.Skill + " Lv" + itoa(int64(j.MinLevel)) + "，我等级不够"
 			}
-			success := rand.Float64() < 0.3+0.5*float64(skill)/7.0
+			// M6.2.1 成功率随技能等级（与服务一致）
+			success := rand.Float64() < skillSuccessRate(skill)
 			if success {
 				j.Status = "done"
 				// M5.1 收益倍率：等级越高，同一份工作收入越高
@@ -132,6 +133,13 @@ func (w *World) DoJob(agentID, jobID int64) (int64, string) {
 				})
 				// 性能：已完成工作归档清理，防止 Jobs 无限增长
 				w.trimJobsLocked()
+				// M6.2.1 行动冷却：做完工作后忙碌一段，不能无限连续干活
+				if a, ok := w.Agents[agentID]; ok {
+					cd := jobCooldown(j.Skill)
+					if t := time.Now().Add(cd); t.After(a.BusyUntil) {
+						a.BusyUntil = t
+					}
+				}
 				return reward, "完成了" + j.Title + "，获得" + itoa(reward) + " coins"
 			}
 			j.Status = "open"
@@ -400,11 +408,13 @@ func (w *World) laborMarketLocked() []ServiceOffer {
 	return out
 }
 
-// HireAgent M6.1：雇主雇佣 worker 完成一个服务（Labor Market 交易）。
+// HireAgent M6.1 + M6.2.1：雇主雇佣 worker 完成一个服务（Labor Market 交易）。
 //   - 校验：雇主余额足够、worker 存在且拥有对应技能（等级够）
-//   - Escrow：创建 Contract，立即把服务费从雇主余额锁进合约
+//   - Escrow：创建 Contract，把服务费从雇主余额锁进合约
+//   - M6.2.1：合约进入 working，按服务耗时设定 ReadyAt；worker 进入忙碌（期间不能接新活），
+//     雇主也短暂忙碌（下单协调）。完成/失败由 RoundTick 的 SettleContracts 到期结算，
+//     不再创建后瞬间完成 —— 阻断"高速刷合约"。
 //   - 返回 (contractID, 是否创建成功)
-// 创建后由 executor 立即调用 ExecuteContract 让 worker 执行。
 func (w *World) HireAgent(employer, worker int64, serviceID string) (int64, bool) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -423,6 +433,10 @@ func (w *World) HireAgent(employer, worker int64, serviceID string) (int64, bool
 	if !ok {
 		return 0, false
 	}
+	// worker 忙（正在做别的服务）→ 不能接新单
+	if time.Now().Before(wrk.BusyUntil) {
+		return 0, false
+	}
 	lv := wrk.SkillLevel(svc.Skill)
 	if lv < svc.MinLevel {
 		return 0, false // worker 没有该技能或等级不够
@@ -430,49 +444,55 @@ func (w *World) HireAgent(employer, worker int64, serviceID string) (int64, bool
 	// Escrow：从雇主扣款锁进合约
 	emp.Balance -= svc.Price
 	emp.TotalSpent += svc.Price
+	now := time.Now()
+	dur := svc.Duration
+	if dur <= 0 {
+		dur = 5 * time.Second // 兜底
+	}
 	ct := &Contract{
 		ID: w.nextContractID, Employer: employer, Worker: worker,
-		Service: svc.Name, Price: svc.Price, Status: "pending",
-		CreatedAt: time.Now(), Escrow: svc.Price,
+		Service: svc.Name, Price: svc.Price, Status: "working",
+		CreatedAt: now, StartedAt: now, ReadyAt: now.Add(dur), Escrow: svc.Price,
 	}
 	w.nextContractID++
 	w.Contracts = append(w.Contracts, ct)
+	// 冷却：worker 忙到 ReadyAt（服务执行中），雇主忙一小段（下单协调，不能无限下单）
+	wrk.BusyUntil = ct.ReadyAt
+	if emp.BusyUntil.Before(ct.ReadyAt) {
+		emp.BusyUntil = ct.ReadyAt
+	}
 	w.touchVersionLocked()
 	w.obs.Publish("contract.created", map[string]interface{}{
-		"id": ct.ID, "employer": employer, "worker": worker, "service": svc.Name, "price": svc.Price,
+		"id": ct.ID, "employer": employer, "worker": worker, "service": svc.Name,
+		"price": svc.Price, "readyIn": int(dur.Seconds()),
 	})
 	return ct.ID, true
 }
 
-// ExecuteContract M6.1：worker 执行合约服务（领取即做）。
-//   - 按 worker 技能成功率判定
+// SettleContracts M6.2.1：结算所有到期的 working 合约（由 RoundTick 每 tick 调用）。
+//   - 按 worker 技能成功率判定（成功率随技能等级提高）
 //   - 成功：Escrow 释放给 worker（Transfer 记录）+ 技能升级
 //   - 失败：Escrow 退回雇主 + Contract failed
-// 返回 (worker 实际收入, 结果描述)。
-func (w *World) ExecuteContract(contractID int64) (int64, string) {
+func (w *World) SettleContracts(now time.Time) int {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	settled := 0
 	for _, ct := range w.Contracts {
-		if ct.ID != contractID || ct.Status != "pending" {
-			continue
+		if ct.Status != "working" || now.Before(ct.ReadyAt) {
+			continue // 未到期
 		}
+		settled++
 		wrk := w.Agents[ct.Worker]
 		if wrk == nil {
-			// worker 消失：退回雇主
 			ct.Status = "failed"
 			w.obs.Publish("contract.failed", map[string]interface{}{"id": ct.ID, "reason": "worker gone"})
-			return 0, "worker 不存在，合约失败"
+			continue
 		}
 		// 该合约对应的服务技能
-		var svcSkill string
-		for _, s := range w.Services {
-			if s.Name == ct.Service {
-				svcSkill = s.Skill
-				break
-			}
-		}
+		svcSkill := w.contractSkillLocked(ct.Service)
 		lv := wrk.SkillLevel(svcSkill)
-		success := rand.Float64() < 0.3+0.5*float64(lv)/7.0
+		// M6.2.1 成功率随技能等级（Lv1~60% / Lv3~73% / Lv5~85% / Lv7~97%）
+		success := rand.Float64() < skillSuccessRate(lv)
 		if success {
 			ct.Status = "completed"
 			// Escrow 释放给 worker
@@ -484,17 +504,85 @@ func (w *World) ExecuteContract(contractID int64) (int64, string) {
 			w.obs.Publish("contract.completed", map[string]interface{}{
 				"id": ct.ID, "employer": ct.Employer, "worker": ct.Worker, "service": ct.Service, "price": ct.Escrow,
 			})
-			return ct.Escrow, "完成了" + ct.Service + "，获得" + itoa(ct.Escrow) + " coins"
+		} else {
+			ct.Status = "failed"
+			// 失败：Escrow 退回雇主
+			w.transferLocked(0, ct.Employer, ct.Escrow, "contract-refund", ct.Service+"退款")
+			w.obs.Publish("contract.failed", map[string]interface{}{
+				"id": ct.ID, "employer": ct.Employer, "worker": ct.Worker, "service": ct.Service, "refund": ct.Escrow,
+			})
 		}
-		ct.Status = "failed"
-		// 失败：Escrow 退回雇主
-		w.transferLocked(0, ct.Employer, ct.Escrow, "contract-refund", ct.Service+"退款")
-		w.obs.Publish("contract.failed", map[string]interface{}{
-			"id": ct.ID, "employer": ct.Employer, "worker": ct.Worker, "service": ct.Service, "refund": ct.Escrow,
-		})
-		return 0, "服务" + ct.Service + "失败了，费用退回"
 	}
-	return 0, "合约不存在或已结束"
+	return settled
+}
+
+// ContractDuration 返回某合约的服务执行耗时（供 executor 展示"多久后结算"）。
+func (w *World) ContractDuration(contractID int64) time.Duration {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	for _, ct := range w.Contracts {
+		if ct.ID == contractID {
+			return ct.ReadyAt.Sub(ct.StartedAt)
+		}
+	}
+	return 0
+}
+
+// ContractPrice 返回某合约的价格（供 executor 展示托管金额）。
+func (w *World) ContractPrice(contractID int64) int64 {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	for _, ct := range w.Contracts {
+		if ct.ID == contractID {
+			return ct.Price
+		}
+	}
+	return 0
+}
+
+// contractSkillLocked 返回合约对应服务的技能（无锁，调用方需持锁）。
+func (w *World) contractSkillLocked(serviceName string) string {
+	for _, s := range w.Services {
+		if s.Name == serviceName {
+			return s.Skill
+		}
+	}
+	return ""
+}
+
+// skillSuccessRate M6.2.1：技能等级 → 服务/工作成功率（更陡峭，高等级明显更可靠）。
+//   Lv1≈60%  Lv3≈73%  Lv5≈85%  Lv7≈97%
+// 相比旧的 0.3+0.5*Lv/7（Lv1≈37%），高等级 worker 的可靠性优势更明显，
+// 让"便宜低技能 worker"与"贵高技能 worker"形成真实取舍。
+func skillSuccessRate(level int) float64 {
+	if level <= 0 {
+		return 0.3
+	}
+	if level >= 7 {
+		return 0.97
+	}
+	return 0.55 + 0.06*float64(level)
+}
+
+// jobCooldown M6.2.1：不同技能的工作做完后的冷却时长（越复杂的工作耗时越久）。
+// 让经济节奏更真实：不能像机器一样每轮都高速完成工作赚钱。
+func jobCooldown(skill string) time.Duration {
+	switch skill {
+	case "doctor":
+		return 40 * time.Second
+	case "engineer":
+		return 30 * time.Second
+	case "miner":
+		return 20 * time.Second
+	case "farmer":
+		return 15 * time.Second
+	case "chef":
+		return 12 * time.Second
+	case "courier":
+		return 10 * time.Second
+	default:
+		return 8 * time.Second
+	}
 }
 
 // Consume 消费（用库存满足需求，或直接花钱）。
@@ -599,6 +687,8 @@ func (w *World) RoundTick() {
 	w.round++
 	w.mu.Unlock()
 	w.SpawnJobs()
+	// M6.2.1 合约结算：到期的 working 合约在本 tick 完成/失败
+	w.SettleContracts(time.Now())
 	// 随机价格波动
 	w.mu.Lock()
 	if rand.Float64() < 0.5 {
@@ -640,6 +730,7 @@ type ContractStats struct {
 }
 
 // ContractView 合约的公开视图（Observatory 展示雇佣活动）。
+// Status: working(执行中) / completed / failed
 type ContractView struct {
 	ID        int64  `json:"id"`
 	Employer  int64  `json:"employer"`
@@ -647,6 +738,7 @@ type ContractView struct {
 	Service   string `json:"service"`
 	Price     int64  `json:"price"`
 	Status    string `json:"status"`
+	Duration  int64  `json:"duration"`  // M6.2.1 服务执行耗时（秒）
 	CreatedAt int64  `json:"createdAt"`
 }
 
@@ -727,7 +819,9 @@ func (w *World) snapshotLocked() *PublicSnapshot {
 	for _, ct := range w.Contracts[start:] {
 		snap.Contracts = append(snap.Contracts, ContractView{
 			ID: ct.ID, Employer: ct.Employer, Worker: ct.Worker, Service: ct.Service,
-			Price: ct.Price, Status: ct.Status, CreatedAt: ct.CreatedAt.UnixMilli(),
+			Price: ct.Price, Status: ct.Status,
+			Duration: int64(ct.ReadyAt.Sub(ct.StartedAt).Seconds()),
+			CreatedAt: ct.CreatedAt.UnixMilli(),
 		})
 	}
 	// 累计统计基于全部合约（口径：累计值）

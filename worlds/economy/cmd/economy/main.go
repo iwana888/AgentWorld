@@ -40,13 +40,15 @@ import (
 
 func main() {
 	dbPath := envOr("ECO_DB", "economy.db")
-	interval := 3 * time.Second
+	// M6.2.1 经济时间尺度：默认唤醒 5s、需求刷新 8s（比原来 3s/5s 慢），
+	// 配合 Contract Duration / Action Cooldown，让世界节奏更接近真实、不再"高速刷"。
+	interval := 5 * time.Second
 	if v := os.Getenv("ECO_INTERVAL"); v != "" {
 		if d, err := time.ParseDuration(v); err == nil {
 			interval = d
 		}
 	}
-	tick := 5 * time.Second
+	tick := 8 * time.Second
 	if v := os.Getenv("ECO_TICK"); v != "" {
 		if d, err := time.ParseDuration(v); err == nil {
 			tick = d

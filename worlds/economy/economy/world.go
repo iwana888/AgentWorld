@@ -42,6 +42,7 @@ type Agent struct {
 	TotalEarned  int64             // 累计赚取（统计）
 	TotalSpent   int64             // 累计花费（统计）
 	LastTradeAt  time.Time         // 上次交易时间（避免连续刷）
+	BusyUntil    time.Time         // M6.2.1 行动冷却：忙到何时（工作/提供服务期间不能行动）
 	// M5 Skill Economy 实验指标：技能投资回报
 	SkillInvested int64 // 技能投资累计花费（买技能花的钱）
 	SkillEarned   int64 // 通过技能工作累计赚的钱（投资收益）
@@ -110,18 +111,22 @@ type Service struct {
 	Skill    string // 所需技能
 	MinLevel int    // 最低技能等级
 	Price    int64  // 固定服务价格（雇主付给 worker）
+	Duration time.Duration // M6.2.1 服务执行耗时（完成需要真实时间，不能瞬间刷）
 }
 
 // Contract 一份雇佣合约（M6.1）。
 // 交易不能直接转账，走合约 + Escrow 托管，保证"付钱后 worker 才执行"。
+// M6.2.1：合约有执行时间——创建后进入 working，到期由 RoundTick 结算，不再瞬间完成。
 type Contract struct {
 	ID        int64
 	Employer  int64    // 雇主（付款方）
 	Worker    int64    // 服务提供方（收款方）
 	Service   string   // 服务名
 	Price     int64    // 合约价（= 服务固定价）
-	Status    string   // pending / completed / failed
+	Status    string   // working / completed / failed
 	CreatedAt time.Time
+	StartedAt time.Time     // 开始执行时间
+	ReadyAt   time.Time     // 执行完成时间（= StartedAt + Duration）
 	Escrow    int64    // 托管金额（雇主导出，完成后给 worker / 失败退回）
 }
 
@@ -273,13 +278,14 @@ func GeneratedProfile(i int) AgentProfile {
 // 服务价格 < 对应技能价格（否则 Agent 没理由雇人而不买技能）。
 // 这制造 M5→M6 的架桥决策：买技能（100，长期）vs 雇人（20，一次性）。
 func (w *World) initServices() {
+	// M6.2.1 每种服务有执行耗时：完成需要真实时间，Agent 不能无限刷合约。
 	for _, s := range []*Service{
-		{ID: "repair_machine", Name: "Repair Machine", Skill: "engineer", MinLevel: 1, Price: 20},
-		{ID: "harvest_crops", Name: "Harvest Crops", Skill: "farmer", MinLevel: 1, Price: 10},
-		{ID: "collect_data", Name: "Collect Data", Skill: "courier", MinLevel: 1, Price: 8},
-		{ID: "medical_treatment", Name: "Medical Treatment", Skill: "doctor", MinLevel: 1, Price: 25},
-		{ID: "mine_ore", Name: "Mine Ore", Skill: "miner", MinLevel: 1, Price: 15},
-		{ID: "cook_meal", Name: "Cook Meal", Skill: "chef", MinLevel: 1, Price: 10},
+		{ID: "collect_data", Name: "Collect Data", Skill: "courier", MinLevel: 1, Price: 8, Duration: 10 * time.Second},
+		{ID: "harvest_crops", Name: "Harvest Crops", Skill: "farmer", MinLevel: 1, Price: 10, Duration: 15 * time.Second},
+		{ID: "mine_ore", Name: "Mine Ore", Skill: "miner", MinLevel: 1, Price: 15, Duration: 20 * time.Second},
+		{ID: "repair_machine", Name: "Repair Machine", Skill: "engineer", MinLevel: 1, Price: 20, Duration: 30 * time.Second},
+		{ID: "cook_meal", Name: "Cook Meal", Skill: "chef", MinLevel: 1, Price: 10, Duration: 12 * time.Second},
+		{ID: "medical_treatment", Name: "Medical Treatment", Skill: "doctor", MinLevel: 1, Price: 25, Duration: 40 * time.Second},
 	} {
 		w.Services[s.ID] = s
 	}

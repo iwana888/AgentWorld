@@ -36,7 +36,7 @@ COPY --from=builder /out/economy /app/economy
 VOLUME ["/data"]
 ENV ECO_DB=/data/economy.db \
     ECO_OBS_ADDR=:19100 \
-    ECO_INTERVAL=3s \
-    ECO_TICK=5s
+    ECO_INTERVAL=5s \
+    ECO_TICK=8s
 EXPOSE 19100
 CMD ["/app/economy"]

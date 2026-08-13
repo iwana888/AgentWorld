@@ -47,6 +47,7 @@
         <span class="ct-arrow">→</span>
         <span class="ct-worker">#{{ c.worker }}</span>
         <span class="ct-service">{{ c.service }}</span>
+        <span v-if="c.status==='working'" class="ct-dur">~{{ c.duration }}s</span>
         <span class="ct-price">-{{ c.price }}</span>
       </div>
       <div v-if="!contracts.length" class="lm-empty">还没有雇佣活动…</div>
@@ -67,7 +68,7 @@ const contracts = computed<ContractView[]>(() => {
 })
 
 function statusIcon(s: string) {
-  return s === 'completed' ? '✅' : s === 'failed' ? '❌' : '⏳'
+  return s === 'completed' ? '✅' : s === 'failed' ? '❌' : '⏳'  // working → ⏳ 执行中
 }
 function fmtVol(v: number) {
   if (v >= 1000) return (v / 1000).toFixed(1) + 'k'
@@ -100,6 +101,7 @@ function fmtVol(v: number) {
 .ct-employer, .ct-worker { color: #7cc3ff; flex-shrink: 0; }
 .ct-arrow { color: #5a6278; flex-shrink: 0; }
 .ct-service { flex: 1; color: #c6d0e8; }
+.ct-dur { color: #7a86a6; font-size: 9px; flex-shrink: 0; }
 .ct-price { color: #ff7b72; font-weight: 700; flex-shrink: 0; }
 .lm-empty { color: #5a6278; text-align: center; padding: 14px 0; font-size: 12px; }
 </style>

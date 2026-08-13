@@ -7,6 +7,7 @@ package economy
 
 import (
 	"sort"
+	"time"
 
 	"agentworld/internal/skill"
 )
@@ -36,6 +37,10 @@ type Perception struct {
 	WealthRank  int      // 财富排名（1=最富）
 	AgentCount  int
 	TotalWealth int64
+	// M6.2.1 行动冷却：true = 正在忙（做工作/提供服务中），本轮不该接新活
+	IsBusy bool
+	// BusyRemain M6.2.1 忙碌剩余时间（秒，供 Why 展示"还要忙多久"）
+	BusyRemain int64
 }
 
 // SkillOffer 市场上的一门技能（可购买）。
@@ -137,6 +142,15 @@ func (w *World) BuildPerception(agentID int64) *Perception {
 			if as.Level > 0 {
 				p.WorkersBySkill[as.SkillID] = append(p.WorkersBySkill[as.SkillID], ag.ID)
 			}
+		}
+	}
+	// M6.2.1 行动冷却：当前 Agent 是否忙碌（正在做工作/提供服务）
+	now := time.Now()
+	if now.Before(a.BusyUntil) {
+		p.IsBusy = true
+		p.BusyRemain = int64(now.Sub(a.BusyUntil).Seconds())
+		if p.BusyRemain < 0 {
+			p.BusyRemain = 0
 		}
 	}
 	// 财富排名
