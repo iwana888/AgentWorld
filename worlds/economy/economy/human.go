@@ -10,6 +10,7 @@ package economy
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"strings"
 
 	"agentworld/internal/skill"
 )
@@ -76,22 +77,60 @@ func (w *World) AuthHuman(token string) (int64, bool) {
 }
 
 // HumanDoJob M7：Human 执行一份工作（完全复用 AI 的 DoJob，含技能检查/成功率/奖励/冷却）。
+// 关键修复：Human 在前端选的是"开放工作"（open），而 DoJob 只处理"已认领"（claimed）的。
+// 所以 Human 执行前先自动 claim（如果 job 是 open 且无人认领），再执行 —— 与 AI 的
+// "ClaimJob → DoJob" 两条路径一致，Human 只是把两步合为一步。
 // 返回 (收入, 结果描述, 是否成功)。
 func (w *World) HumanDoJob(agentID, jobID int64) (int64, string, bool) {
+	// 尝试直接做（job 已是 claimed 给该 agent，如 AI 雇场景）
 	reward, msg := w.DoJob(agentID, jobID)
-	if reward > 0 {
-		return reward, msg, true
+	if reward > 0 || (msg != "" && !strings.Contains(msg, "没有这份工作")) {
+		return reward, msg, reward > 0
+	}
+	// 未认领：先 claim 再 do（Human 对开放工作做"接单即做"）
+	if w.ClaimJob(agentID, jobID) {
+		reward, msg := w.DoJob(agentID, jobID)
+		return reward, msg, reward > 0
 	}
 	return 0, msg, false
 }
 
 // HumanBuySkill M7：Human 购买技能（完全复用 AI 的 BuySkill，含余额检查/扣款/事件）。
+// 返回精确的错误信息，便于 Human 前端提示真实原因。
 func (w *World) HumanBuySkill(agentID int64, skillID string) (bool, string) {
-	ok := w.BuySkill(agentID, skillID)
-	if ok {
-		return true, "购买了 " + skillID
+	w.mu.Lock()
+	a := w.Agents[agentID]
+	// 精确诊断（无需长时间持锁，先读状态）
+	owned := a != nil && a.SkillLevel(skillID) > 0
+	hasSkill := w.skills != nil && w.skills.Get(skillID) != nil
+	var balance int64
+	if a != nil {
+		balance = a.Balance
 	}
-	return false, "购买失败（余额不足 / 已拥有 / 无此技能）"
+	price := int64(0)
+	if hasSkill {
+		price = w.skills.Get(skillID).BasePrice
+	}
+	w.mu.Unlock()
+
+	if a == nil {
+		return false, "Agent 不存在"
+	}
+	if owned {
+		return false, "你已经拥有 " + skillID + " 技能"
+	}
+	if !hasSkill || price <= 0 {
+		return false, "技能市场没有 " + skillID
+	}
+	if balance < price {
+		return false, "余额不足：" + itoaInt64(balance) + " < " + itoaInt64(price)
+	}
+	// 正常购买（复用 AI 的 BuySkill 完整经济流程）
+	ok := w.BuySkill(agentID, skillID)
+	if !ok {
+		return false, "购买失败"
+	}
+	return true, "购买了 " + skillID + "，花费 " + itoaInt64(price)
 }
 
 // HumanHireAgent M7：Human 雇佣 AI（完全复用 HireAgent，含 Escrow/冷却/结算）。

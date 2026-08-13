@@ -1,6 +1,7 @@
 package economy
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -22,6 +23,65 @@ func newHumanWorld() *World {
 		Balance: 200, Skills: []skill.AgentSkill{{SkillID: "engineer", Level: 5}},
 	}
 	return w
+}
+
+// withSkillMarket 给世界挂一个技能市场（含价格）。
+func (w *World) withSkillMarket() *World {
+	reg := skill.NewRegistry()
+	reg.Register(&skill.Skill{ID: "engineer", Name: "Engineer", Description: "工程", BasePrice: 100})
+	reg.Register(&skill.Skill{ID: "courier", Name: "Courier", Description: "物流", BasePrice: 40})
+	reg.Register(&skill.Skill{ID: "farmer", Name: "Farmer", Description: "农业", BasePrice: 50})
+	w.skills = reg
+	return w
+}
+
+// TestHumanBuySkillWithMarket 验证 M7：Human 用 100 初始余额买技能（带市场）。
+// 修复：区分"已拥有/余额不足/无此技能"。
+func TestHumanBuySkillWithMarket(t *testing.T) {
+	w := newHumanWorld().withSkillMarket()
+	id, _, ok := w.RegisterHuman("Ouyang", "secret")
+	if !ok {
+		t.Fatal("register fail")
+	}
+	// 买 courier（已拥有 → 应提示已拥有，不扣钱）
+	ok, msg := w.HumanBuySkill(id, "courier")
+	if ok {
+		t.Error("should not buy already-owned courier")
+	}
+	if !stringsContains(msg, "已经拥有") {
+		t.Errorf("expected already-owned msg, got: %s", msg)
+	}
+	// 买 engineer（100，初始 100 够）
+	ok, msg = w.HumanBuySkill(id, "engineer")
+	if !ok {
+		t.Errorf("should buy engineer with 100 balance, got: %s", msg)
+	}
+	if w.Agents[id].Balance != 0 {
+		t.Errorf("balance should be 0 after buying engineer(100), got %d", w.Agents[id].Balance)
+	}
+	if w.Agents[id].SkillLevel("engineer") != 1 {
+		t.Errorf("should have engineer Lv1, got %d", w.Agents[id].SkillLevel("engineer"))
+	}
+	// 买 farmer（余额 0 → 应提示余额不足）
+	ok, msg = w.HumanBuySkill(id, "farmer")
+	if ok {
+		t.Error("should not buy farmer with 0 balance")
+	}
+	if !stringsContains(msg, "余额不足") {
+		t.Errorf("expected insufficient-balance msg, got: %s", msg)
+	}
+}
+
+func stringsContains(s, sub string) bool {
+	return len(s) >= len(sub) && indexOfStr(s, sub) >= 0
+}
+func indexOfStr(s, sub string) int {
+	for i := 0; i+len(sub) <= len(s); i++ {
+		if s[i:i+len(sub)] == sub {
+			return i
+		}
+	}
+	return -1
 }
 
 // TestHumanRegisterLogin 验证 M7：注册 / 登录 / 鉴权。
@@ -70,17 +130,26 @@ func TestHumanDoJob(t *testing.T) {
 	if !ok {
 		t.Fatal("register fail")
 	}
-	// 一份 courier 工作（Deliver Package Lv1）
-	w.Jobs = []*Job{{ID: 10, Title: "Deliver Package", Reward: 10, Skill: "courier", MinLevel: 1, Status: "claimed", ClaimedBy: id}}
-	// Human 执行工作（可能因成功率失败，但应走经济规则）
+	// 场景 A：开放工作（open，无人认领）—— 用户真实场景，Human 应能 claim+do
+	w.Jobs = []*Job{{ID: 10, Title: "Deliver Package", Reward: 10, Skill: "courier", MinLevel: 1, Status: "open", ClaimedBy: 0}}
 	reward, msg, success := w.HumanDoJob(id, 10)
-	if success {
+	if !success {
+		// 可能是成功率失败，但不应该返回"没有这份工作"
+		if strings.Contains(msg, "没有这份工作") {
+			t.Errorf("open job should be claim+do, not 'no job': %s", msg)
+		}
+	} else {
 		if w.Agents[id].Balance != 100+reward {
 			t.Errorf("human balance should increase by reward, got %d", w.Agents[id].Balance)
 		}
-	} else {
-		_ = msg
 	}
+	// 场景 B：job 已 done（不存在）→ 返回"没有这份工作"
+	w.Jobs = []*Job{{ID: 11, Title: "X", Reward: 5, Skill: "courier", MinLevel: 1, Status: "done", ClaimedBy: 0}}
+	_, msg2, success2 := w.HumanDoJob(id, 11)
+	if success2 {
+		t.Errorf("done job should not be doable")
+	}
+	_ = msg2
 }
 
 // TestHumanBuySkill 验证 M7：Human 买技能（复用 AI 的 BuySkill 含余额/扣款）。
