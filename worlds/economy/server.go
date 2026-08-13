@@ -37,6 +37,13 @@ func NewServer(mod *Module) *Server {
 	s.mux.HandleFunc("/api/agents/", s.handleAgent)
 	s.mux.HandleFunc("/api/events", s.handleEvents)
 	s.mux.HandleFunc("/api/events/stream", s.handleStream)
+	// M7 Human Entrance
+	s.mux.HandleFunc("/api/auth/register", s.handleRegister)
+	s.mux.HandleFunc("/api/auth/login", s.handleLogin)
+	s.mux.HandleFunc("/api/world", s.handleWorld)
+	s.mux.HandleFunc("/api/actions/do_job", s.handleHumanDoJob)
+	s.mux.HandleFunc("/api/actions/buy_skill", s.handleHumanBuySkill)
+	s.mux.HandleFunc("/api/actions/hire_agent", s.handleHumanHireAgent)
 	s.mux.HandleFunc("/", s.serveWeb) // 内嵌前端（非 /api 回退 index.html）
 	return s
 }
@@ -166,6 +173,152 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 			flusher.Flush()
 		}
 	}
+}
+
+// ---- M7 Human Entrance ----
+
+// authReq 注册/登录请求体。
+type authReq struct {
+	Name     string `json:"name"`
+	Password string `json:"password"`
+}
+
+// handleRegister POST /api/auth/register —— 注册 Human Agent。
+func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req authReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	id, token, ok := s.mod.Game().RegisterHuman(req.Name, req.Password)
+	if !ok {
+		http.Error(w, "register failed (name taken or invalid)", http.StatusConflict)
+		return
+	}
+	writeJSON(w, map[string]interface{}{
+		"token": token, "agent_id": id, "name": req.Name, "kind": "human",
+		"balance": 100,
+	})
+}
+
+// handleLogin POST /api/auth/login —— Human 登录。
+func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req authReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	id, token, ok := s.mod.Game().LoginHuman(req.Name, req.Password)
+	if !ok {
+		http.Error(w, "login failed", http.StatusUnauthorized)
+		return
+	}
+	writeJSON(w, map[string]interface{}{
+		"token": token, "agent_id": id, "name": req.Name, "kind": "human",
+	})
+}
+
+// handleWorld GET /api/world —— Human 视角的世界状态（含自己的 Agent + 行动入口）。
+// 若带有效 token，附带"我的 Agent"信息；否则只返回世界公开状态。
+func (s *Server) handleWorld(w http.ResponseWriter, r *http.Request) {
+	snap := s.mod.Game().Snapshot()
+	me := map[string]interface{}{}
+	if id, ok := s.authFromRequest(r); ok {
+		if a := s.mod.Game().AgentOf(id); a != nil {
+			me = map[string]interface{}{
+				"id": a.ID, "name": a.Name, "kind": a.Kind, "profession": a.Profession,
+				"balance": a.Balance, "reputation": a.Reputation, "skills": a.Skills,
+				"completed": a.CompletedContracts, "failed": a.FailedContracts,
+				"totalEarned": a.TotalEarned, "totalSpent": a.TotalSpent,
+			}
+		}
+	}
+	writeJSON(w, map[string]interface{}{
+		"round": snap.Round, "agents": snap.Agents, "totalWealth": snap.TotalWealth,
+		"openJobs": snap.OpenJobs, "skillMarket": snap.SkillMarket,
+		"services": snap.Services, "contracts": snap.Contracts,
+		"contractStats": snap.ContractStats, "me": me,
+	})
+}
+
+// actionReq 通用行动请求体。
+type actionReq struct {
+	JobID     int64  `json:"job_id"`
+	SkillID   string `json:"skill_id"`
+	ServiceID string `json:"service_id"`
+	WorkerID  int64  `json:"worker_id"`
+}
+
+// handleHumanDoJob POST /api/actions/do_job —— Human 执行工作。
+func (s *Server) handleHumanDoJob(w http.ResponseWriter, r *http.Request) {
+	agentID, ok := s.requireAuth(w, r)
+	if !ok {
+		return
+	}
+	var req actionReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	reward, msg, success := s.mod.Game().HumanDoJob(agentID, req.JobID)
+	writeJSON(w, map[string]interface{}{"success": success, "reward": reward, "message": msg})
+}
+
+// handleHumanBuySkill POST /api/actions/buy_skill —— Human 购买技能。
+func (s *Server) handleHumanBuySkill(w http.ResponseWriter, r *http.Request) {
+	agentID, ok := s.requireAuth(w, r)
+	if !ok {
+		return
+	}
+	var req actionReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	success, msg := s.mod.Game().HumanBuySkill(agentID, req.SkillID)
+	writeJSON(w, map[string]interface{}{"success": success, "message": msg})
+}
+
+// handleHumanHireAgent POST /api/actions/hire_agent —— Human 雇佣 AI。
+func (s *Server) handleHumanHireAgent(w http.ResponseWriter, r *http.Request) {
+	agentID, ok := s.requireAuth(w, r)
+	if !ok {
+		return
+	}
+	var req actionReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	_, success, msg := s.mod.Game().HumanHireAgent(agentID, req.WorkerID, req.ServiceID)
+	writeJSON(w, map[string]interface{}{"success": success, "message": msg})
+}
+
+// authFromRequest 从请求头解析 Bearer token → agentID。
+func (s *Server) authFromRequest(r *http.Request) (int64, bool) {
+	h := r.Header.Get("Authorization")
+	if len(h) > 7 && strings.EqualFold(h[:7], "Bearer ") {
+		return s.mod.Game().AuthHuman(h[7:])
+	}
+	return 0, false
+}
+
+// requireAuth 需要鉴权的 handler 包装：无有效 token 返回 401。
+func (s *Server) requireAuth(w http.ResponseWriter, r *http.Request) (int64, bool) {
+	id, ok := s.authFromRequest(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return 0, false
+	}
+	return id, true
 }
 
 func writeJSON(w http.ResponseWriter, v interface{}) {

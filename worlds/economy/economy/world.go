@@ -26,6 +26,8 @@ import (
 type Agent struct {
 	ID          int64             // 对应 AgentWorld AgentID
 	Name        string            // 名字
+	Kind        string            // M7: ai / human / hybrid（human 不自动 Think，由真人决策）
+	Password    string            // M7: human 登录密码（ai 为空）
 	Profession  string            // 职业（工程师/农民/商人/信使/医生…）
 	Personality string            // 性格
 	Goal        string            // 当前经济目标（可由 Planner 更新）
@@ -191,6 +193,9 @@ type World struct {
 	version    int64         // 状态版本号（每次写操作 +1）
 	snapCache  *PublicSnapshot
 	snapVer    int64         // 缓存对应的版本号
+	// M7 Human Entrance：token → human agentID 的会话映射
+	tokens     map[string]int64
+	nextAgent  int64         // 用于分配 human agent ID（避开现有 AI agent ID）
 }
 
 // SkillBuy 一次技能购买记录（Observatory 回答"谁买了技能"）。
@@ -249,8 +254,11 @@ func NewWorld(agentIDs []int64, names []string, personalities []string, obs *goo
 		skills:    skills,
 		SkillBuys: []SkillBuy{},
 		Services:  map[string]*Service{},
+		tokens:    map[string]int64{},
 		startedAt: time.Now(),
 	}
+	// 为 human agent 预留 ID（从高值开始，避免与 AI agent ID 冲突）
+	w.nextAgent = 1000000
 	w.initServices()
 	for i := 0; i < len(agentIDs); i++ {
 		p := InitialProfiles[i%len(InitialProfiles)]
@@ -267,6 +275,7 @@ func NewWorld(agentIDs []int64, names []string, personalities []string, obs *goo
 		w.Agents[agentIDs[i]] = &Agent{
 			ID:            agentIDs[i],
 			Name:          names[i],
+			Kind:          "ai",
 			Profession:    p.Profession,
 			Personality:   pers,
 			Goal:          "赚到更多钱，改善生活",

@@ -22,6 +22,9 @@
       </div>
     </header>
 
+    <!-- 人类接入面板（M7） -->
+    <HumanPanel :snapshot="snapshot" />
+
     <!-- 顶部经济面板 -->
     <EconomyPanel :snapshot="snapshot" />
 
@@ -54,6 +57,7 @@ import AgentInspector from './components/AgentInspector.vue'
 import TxStream from './components/TxStream.vue'
 import SkillMarket from './components/SkillMarket.vue'
 import LaborMarket from './components/LaborMarket.vue'
+import HumanPanel from './components/HumanPanel.vue'
 import { useGame } from './composables/useGame'
 
 const { snapshot, txStream, connected, fetchInspector } = useGame()
