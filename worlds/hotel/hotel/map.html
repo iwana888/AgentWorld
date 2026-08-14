@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hotel World · 空间地图</title>
+<style>
+  * { box-sizing: border-box; margin: 0; }
+  body { background: #0d1320; color: #e2e9ff; font-family: system-ui, sans-serif; min-height: 100vh; }
+  .wrap { padding: 16px; max-width: 1100px; margin: 0 auto; }
+  h1 { font-size: 20px; margin-bottom: 4px; }
+  .sub { color: #6b7696; font-size: 12px; margin-bottom: 12px; }
+  .topbar { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+  .chip { background: #161d33; border: 1px solid #2a3550; padding: 3px 10px; border-radius: 14px; font-size: 12px; color: #7cc3ff; }
+  .canvas { position: relative; background: #111a2e; border: 1px solid #2a3550; border-radius: 12px;
+    height: 560px; overflow: hidden; }
+  .loc { position: absolute; transform: translate(-50%, -50%); display: flex; flex-direction: column;
+    align-items: center; gap: 2px; }
+  .loc-name { font-size: 11px; color: #9fb3e8; background: #182238; border: 1px solid #2a3550;
+    padding: 2px 8px; border-radius: 10px; white-space: nowrap; }
+  .dot { width: 12px; height: 12px; border-radius: 50%; background: #3d5278; }
+  .agent { position: absolute; transform: translate(-50%, -50%); font-size: 18px; cursor: pointer;
+    filter: drop-shadow(0 0 4px rgba(0,0,0,.5)); transition: transform .15s; }
+  .agent:hover { transform: translate(-50%, -50%) scale(1.25); }
+  .panel { margin-top: 12px; background: #121826; border: 1px solid #2a3550; border-radius: 12px; padding: 14px; }
+  .panel h3 { font-size: 14px; margin-bottom: 8px; color: #9fb3e8; }
+  .kv { display: grid; grid-template-columns: 110px 1fr; gap: 5px; font-size: 13px; }
+  .kv .k { color: #6b7696; }
+  .kv .v { color: #e2e9ff; }
+  .act { margin-top: 10px; display: flex; gap: 6px; flex-wrap: wrap; }
+  .btn { background: #1b2440; color: #7cc3ff; border: 1px solid #2a3550; padding: 4px 12px; border-radius: 8px;
+    cursor: pointer; font-size: 12px; }
+  .btn:hover { background: #232f4a; }
+  .edge { position: absolute; background: #2a3550; height: 2px; transform-origin: left center; }
+  .log { margin-top: 10px; background: #0e1322; border: 1px solid #1f2a44; border-radius: 8px; padding: 8px; font-size: 11px; color: #7a86a6; max-height: 130px; overflow-y: auto; }
+  .log div { padding: 1px 0; }
+  .guest { font-size: 16px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🏨 Hotel World · 空间地图</h1>
+  <div class="sub" id="hotelInfo">加载中…</div>
+  <div class="topbar">
+    <span class="chip" id="locCount">位置 -</span>
+    <span class="chip" id="agentCount">员工 -</span>
+    <span class="chip" id="guestCount">客人 -</span>
+  </div>
+  <div class="canvas" id="canvas"></div>
+  <div class="panel">
+    <h3 id="selTitle">点击地图上的 Agent / 客人查看详情</h3>
+    <div class="kv" id="selDetail"></div>
+    <div class="act" id="selActions"></div>
+  </div>
+  <div class="log" id="log"></div>
+</div>
+<script>
+const canvas = document.getElementById('canvas');
+let locations = [], agents = [], guests = [], edges = [];
+
+function mapDim() {
+  // 把坐标映射到画布：找 min/max，加 padding
+  let minX=Infinity,maxX=-Infinity,minY=Infinity,maxY=-Infinity;
+  locations.forEach(l=>{minX=Math.min(minX,l.X);maxX=Math.max(maxX,l.X);minY=Math.min(minY,l.Y);maxY=Math.max(maxY,l.Y);});
+  const W = canvas.clientWidth-80, H = canvas.clientHeight-80;
+  const spanX = Math.max(maxX-minX,1), spanY = Math.max(maxY-minY,1);
+  return {scaleX: W/spanX, scaleY: H/spanY, offX: 40-minX*W/spanX, offY: 40-minY*H/spanY};
+}
+function px(x,y){ const d=mapDim(); return {x: x*d.scaleX+d.offX, y: y*d.scaleY+d.offY}; }
+
+function renderEdges(){
+  document.querySelectorAll('.edge').forEach(e=>e.remove());
+  edges.forEach(e=>{
+    const a=px(e.from.X,e.from.Y), b=px(e.to.X,e.to.Y);
+    const el=document.createElement('div'); el.className='edge';
+    const dx=b.x-a.x, dy=b.y-a.y, len=Math.hypot(dx,dy), ang=Math.atan2(dy,dx);
+    el.style.left=a.x+'px'; el.style.top=a.y+'px'; el.style.width=len+'px';
+    el.style.transform=`rotate(${ang}rad)`; el.style.pointerEvents='none';
+    canvas.appendChild(el);
+  });
+}
+function render(){
+  canvas.querySelectorAll('.loc,.agent').forEach(e=>e.remove());
+  locations.forEach(l=>{
+    const p=px(l.X,l.Y);
+    const el=document.createElement('div'); el.className='loc'; el.style.left=p.x+'px'; el.style.top=p.y+'px';
+    el.innerHTML=`<div class="loc-name">${l.name}</div><div class="dot"></div>`;
+    canvas.appendChild(el);
+  });
+  agents.forEach(a=>{ drawAgent(a, '🤖'); });
+  guests.forEach(g=>{ drawAgent(g, '👤', true); });
+}
+function drawAgent(a, icon, isGuest){
+  const loc = locations.find(l=>l.id===a.location); if(!loc) return;
+  const p=px(loc.X,loc.Y);
+  const el=document.createElement('div'); el.className='agent'+(isGuest?' guest':''); el.style.left=p.x+'px'; el.style.top=p.y+'px';
+  el.textContent=icon; el.title=a.name; el.onclick=()=>select(a,isGuest);
+  canvas.appendChild(el);
+}
+function select(a, isGuest){
+  document.getElementById('selTitle').textContent = isGuest ? `👤 客人 ${a.name}` : `🤖 员工 ${a.name}`;
+  const loc = locations.find(l=>l.id===a.location);
+  const kv = document.getElementById('selDetail');
+  kv.innerHTML = `
+    <div class="k">Kind</div><div class="v">${a.kind}</div>
+    <div class="k">Role</div><div class="v">${a.role || '-'}</div>
+    <div class="k">Location</div><div class="v">${loc?loc.name:a.location}</div>
+    ${a.busy ? '<div class="k">Busy</div><div class="v" style="color:#ff7b72">忙碌中</div>' : ''}
+    <div class="k">Reachable</div><div class="v">${edges.filter(e=>e.from.id===a.location).map(e=>e.to.name).join(', ')||'-'}</div>`;
+  const act = document.getElementById('selActions');
+  act.innerHTML = '';
+  const reachable = edges.filter(e=>e.from.id===a.location);
+  reachable.forEach(e=>{
+    const b=document.createElement('button'); b.className='btn'; b.textContent=`移动 → ${e.to.name}`;
+    b.onclick=()=>move(a.id, e.to.id); act.appendChild(b);
+  });
+}
+async function move(id, target){
+  const res = await fetch('/api/hotel/actions/move', {method:'POST',headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({agent_id:id, location_id:target})});
+  const d = await res.json(); log(d.message);
+  if(d.success) await load();
+}
+function log(msg){ const el=document.getElementById('log'); el.innerHTML=`<div>${new Date().toLocaleTimeString()} ${msg}</div>`+el.innerHTML; }
+async function load(){
+  const [mapRes, hotelRes] = await Promise.all([
+    fetch('/api/hotel/map'), fetch('/api/hotel')]);
+  const map = await mapRes.json(); const hotel = await hotelRes.json();
+  locations = map.locations||[]; agents = Object.values(map.agents||{}); guests = Object.values(map.guests||{});
+  // 用后端返回的连接渲染边
+  edges = [];
+  (map.connections||[]).forEach(c=>{
+    const f = locations.find(l=>l.id===c.from), t = locations.find(l=>l.id===c.to);
+    if(f && t) edges.push({from:f, to:t});
+  });
+  document.getElementById('hotelInfo').textContent = `${hotel.name} (${hotel.id}) · ${hotel.locations} 个位置`;
+  document.getElementById('locCount').textContent = `位置 ${locations.length}`;
+  document.getElementById('agentCount').textContent = `员工 ${agents.length}`;
+  document.getElementById('guestCount').textContent = `客人 ${guests.length}`;
+  renderEdges(); render();
+}
+load();
+setInterval(load, 3000);
+</script>
+</body>
+</html>
