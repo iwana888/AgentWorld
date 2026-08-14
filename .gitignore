@@ -19,3 +19,14 @@ node_modules/
 
 # 依赖
 vendor/
+
+# 敏感凭证/密钥（防误提交：token、密码、环境文件等）
+.env
+.env.*
+*.key
+*.pem
+*.crt
+secrets*
+credentials*
+*.token
+!**/*.example
