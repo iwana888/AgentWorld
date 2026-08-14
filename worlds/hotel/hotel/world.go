@@ -33,6 +33,7 @@ type SpaceWorld struct {
 
 	agents map[int64]*Agent // 酒店员工
 	guests map[int64]*Guest // 客人
+	state  *interactionState // M8.2 角色/意图/对话/任务
 }
 
 // NewSpaceWorld 创建酒店空间世界。
@@ -43,6 +44,7 @@ func NewSpaceWorld(hotelID, name, description string) *SpaceWorld {
 		bus:      NewEventBus(),
 		agents:   map[int64]*Agent{},
 		guests:   map[int64]*Guest{},
+		state:    newInteractionState(),
 	}
 }
 

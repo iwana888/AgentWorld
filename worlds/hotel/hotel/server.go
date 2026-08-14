@@ -34,6 +34,12 @@ func (s *Server) Mux() *http.ServeMux {
 	mux.HandleFunc("/api/hotel/agents", s.handleAgents)
 	mux.HandleFunc("/api/hotel/actions/move", s.handleMove)
 	mux.HandleFunc("/api/hotel/events", s.handleEvent)
+	// M8.2：对话 / intent / 任务 / 入住
+	mux.HandleFunc("/api/hotel/say", s.handleSay)
+	mux.HandleFunc("/api/hotel/guest/say", s.handleGuestSay)
+	mux.HandleFunc("/api/hotel/conversation", s.handleConversation)
+	mux.HandleFunc("/api/hotel/tasks", s.handleTasks)
+	mux.HandleFunc("/api/hotel/checkin", s.handleCheckIn)
 	// 地图观察台（内嵌 map.html）
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -153,6 +159,89 @@ func (s *Server) handleEvent(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, map[string]interface{}{
 		"event": req.Event, "responsible_agent": responsible,
+	})
+}
+
+// ---- M8.2 对话 / intent / 任务 ----
+
+// sayReq Agent 说话请求。
+type sayReq struct {
+	AgentID int64  `json:"agent_id"`
+	Text    string `json:"text"`
+}
+
+// handleSay POST /api/hotel/say —— 让 Agent 说话。
+func (s *Server) handleSay(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req sayReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	msg := s.world.Say(req.AgentID, req.Text)
+	writeJSON(w, map[string]interface{}{"success": true, "message": msg})
+}
+
+// guestSayReq Guest 说话请求。
+type guestSayReq struct {
+	GuestID int64  `json:"guest_id"`
+	Text    string `json:"text"`
+}
+
+// handleGuestSay POST /api/hotel/guest/say —— Guest 说话（解析 intent + 触发处理/交接）。
+func (s *Server) handleGuestSay(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req guestSayReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	intent, msg := s.world.GuestSay(req.GuestID, req.Text)
+	handler, handoff := s.world.HandleIntent(req.GuestID, intent)
+	writeJSON(w, map[string]interface{}{
+		"success": true, "intent": intent, "message": msg,
+		"handler": handler, "handoff": handoff,
+	})
+}
+
+// handleConversation GET /api/hotel/conversation —— 对话历史。
+func (s *Server) handleConversation(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, s.world.Conversation())
+}
+
+// handleTasks GET /api/hotel/tasks —— 任务列表。
+func (s *Server) handleTasks(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, s.world.Tasks())
+}
+
+// checkInReq 模拟入住请求。
+type checkInReq struct {
+	GuestID   int64  `json:"guest_id"`
+	AgentID   int64  `json:"agent_id"`
+	GuestName string `json:"guest_name"`
+}
+
+// handleCheckIn POST /api/hotel/checkin —— 模拟入住（不接 PMS）。
+func (s *Server) handleCheckIn(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req checkInReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	task, room, ok := s.world.CheckIn(req.GuestID, req.AgentID, req.GuestName)
+	writeJSON(w, map[string]interface{}{
+		"success": ok, "task": task.ID, "room": room,
+		"guest_name": req.GuestName, "status": "checked_in",
 	})
 }
 
