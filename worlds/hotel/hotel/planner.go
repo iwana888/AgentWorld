@@ -111,9 +111,5 @@ func (p *FrontDeskPlanner) Status(guestID int64) (string, string) {
 	if prog == nil {
 		return "none", ""
 	}
-	room := ""
-	if prog != nil {
-		room = prog.room
-	}
-	return prog.step, room
+	return prog.step, prog.room
 }

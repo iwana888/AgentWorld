@@ -1,6 +1,10 @@
 package hotel
 
-import "time"
+import (
+	"log"
+	"os"
+	"time"
+)
 
 // Guest 一个客人（M8.1：Guest = Agent + Hotel Context，不单独造体系）。
 // 真人 / AI 客人都可。
@@ -36,9 +40,12 @@ type SpaceWorld struct {
 	state  *interactionState // M8.2 角色/意图/对话/任务
 	tools  *HotelTool        // M8.3 酒店业务工具层
 	planner *FrontDeskPlanner // M8.3 前台自主决策引擎
+	pmsMCP *MCPToolBackend   // M8.4 真实 PMS/门锁 MCP 后端（未设置则用 Mock）
 }
 
 // NewSpaceWorld 创建酒店空间世界。
+// 默认使用 Mock PMS；若设置了 HOTEL_PMS_MCP_URL，则接入真实 PMS MCP server
+// （M8.4 Real Hotel Adapter）。传输模式由 HOTEL_PMS_MCP_MODE 控制（streamable / sse）。
 func NewSpaceWorld(hotelID, name, description string) *SpaceWorld {
 	w := &SpaceWorld{
 		space:    NewSpace(hotelID, name, description),
@@ -48,9 +55,27 @@ func NewSpaceWorld(hotelID, name, description string) *SpaceWorld {
 		state:    newInteractionState(),
 		tools:    NewHotelTool(NewMockPMS()),
 	}
+	// M8.4：若配置了真实 PMS MCP URL，接入真实 PMS/门锁（否则用 Mock PMS）
+	if url := os.Getenv("HOTEL_PMS_MCP_URL"); url != "" {
+		mode := os.Getenv("HOTEL_PMS_MCP_MODE")
+		if mode == "" {
+			mode = "streamable"
+		}
+		if backend, err := NewMCPToolBackend(url, mode); err != nil {
+			log.Printf("[hotel] 接入真实 PMS 失败，回退 Mock: %v", err)
+		} else {
+			w.pmsMCP = backend
+		}
+	}
 	w.planner = NewFrontDeskPlanner(w.tools)
 	return w
 }
+
+// PMSReal 是否接入了真实 PMS（MCP）。
+func (w *SpaceWorld) PMSReal() bool { return w.pmsMCP != nil }
+
+// PMSMCP 返回真实 PMS MCP 后端。
+func (w *SpaceWorld) PMSMCP() *MCPToolBackend { return w.pmsMCP }
 
 // Tools 返回酒店业务工具层。
 func (w *SpaceWorld) Tools() *HotelTool { return w.tools }

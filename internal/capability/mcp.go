@@ -16,35 +16,47 @@ import (
 
 // MCPBackend 通过 mcp-go 框架连接任意 MCP（Model Context Protocol）服务。
 //
-// 支持的传输：Streamable HTTP（MCP 标准 HTTP 传输，对应 readme 中探测到的
-// localhost:8081/mcp 这类端点）。
+// 支持的传输：
+//   - "streamable"：MCP 标准 HTTP 传输（POST 同端点 + SSE），对应 localhost:8081/mcp
+//   - "sse"：旧版 HTTP+SSE 传输（GET /sse 建流 + POST /messages），对应 localhost:8081/sse
 //
 // MCPBackend 在构造时会：
-//  1. 用 mcp-go 创建 Streamable HTTP 客户端；
+//  1. 用 mcp-go 创建对应传输的客户端；
 //  2. 发起 initialize 握手建立会话；
 //  3. 拉取 tools/list，把远端工具映射为本地的 capability.Tool（惰性）。
 //
 // 对 Agent 而言，"调用某能力"统一走 Backend.Execute(args)，屏蔽 HTTP/MCP 差异。
 type MCPBackend struct {
-	URL       string
-	Headers   map[string]string
-	Timeout   time.Duration
+	URL        string
+	Mode       string // "streamable"（默认） / "sse"
+	Headers    map[string]string
+	Timeout    time.Duration
 	ClientName string
 	ClientVer  string
 
-	mu      sync.Mutex
-	client  *client.Client
+	mu          sync.Mutex
+	client      *client.Client
 	initialized bool
-	tools   map[string]*Tool // 本地缓存：name -> Tool（用于自省/日志，非必须）
+	tools       map[string]*Tool // 本地缓存：name -> Tool（用于自省/日志，非必须）
 }
 
-// NewMCPBackend 构造 MCP 后端（尚不连接；首次 Execute 或 Refresh 时连接）。
+// NewMCPBackend 构造 MCP 后端（Streamable HTTP 传输）。
+// 尚不连接；首次 Execute 或 Refresh 时连接。
 func NewMCPBackend(url string, headers map[string]string) *MCPBackend {
+	return NewMCPBackendWithMode(url, headers, "streamable")
+}
+
+// NewMCPBackendWithMode 构造 MCP 后端，指定传输模式（"streamable" 或 "sse"）。
+func NewMCPBackendWithMode(url string, headers map[string]string, mode string) *MCPBackend {
 	if headers == nil {
 		headers = map[string]string{}
 	}
+	if mode == "" {
+		mode = "streamable"
+	}
 	return &MCPBackend{
 		URL:        url,
+		Mode:       mode,
 		Headers:    headers,
 		Timeout:    20 * time.Second,
 		ClientName: "agentworld-capability",
@@ -67,11 +79,22 @@ func (b *MCPBackend) connectLocked(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	opts := []transport.StreamableHTTPCOption{
-		transport.WithHTTPHeaders(b.Headers),
-		transport.WithHTTPTimeout(b.Timeout),
+	var c *client.Client
+	var err error
+	if b.Mode == "sse" {
+		// 旧版 HTTP+SSE 传输（GET /sse + POST /messages）
+		opts := []transport.ClientOption{
+			transport.WithHeaders(b.Headers),
+		}
+		c, err = client.NewSSEMCPClient(b.URL, opts...)
+	} else {
+		// MCP 标准 Streamable HTTP 传输（POST 同端点 + SSE）
+		opts := []transport.StreamableHTTPCOption{
+			transport.WithHTTPHeaders(b.Headers),
+			transport.WithHTTPTimeout(b.Timeout),
+		}
+		c, err = client.NewStreamableHttpClient(b.URL, opts...)
 	}
-	c, err := client.NewStreamableHttpClient(b.URL, opts...)
 	if err != nil {
 		return fmt.Errorf("MCP 客户端创建失败: %w", err)
 	}

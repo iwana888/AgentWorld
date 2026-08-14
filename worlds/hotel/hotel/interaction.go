@@ -229,6 +229,29 @@ func (w *SpaceWorld) Tasks() []*HotelTask {
 	return out
 }
 
+// ---------- M8.4 真实 PMS 发卡 ----------
+
+// RealPMSCheckIn M8.4：接入真实 PMS/门锁 MCP 时，办理入住 = 发放房卡。
+// 直接调用 send_room_key（cardType=1 新卡/办理入住，keyKind=1 物理卡），
+// 时间格式 YYYY-MM-DD HH:mm:ss。
+// 返回 (是否成功, 房间号, 工具结果)。
+func (w *SpaceWorld) RealPMSCheckIn(guestID int64, roomNumber, arrival, departure string) (bool, string, map[string]interface{}) {
+	if w.pmsMCP == nil {
+		return false, "", nil
+	}
+	result, ok := w.pmsMCP.SendRoomKey(roomNumber, 1, 1, arrival, departure, false)
+	if !ok {
+		return false, roomNumber, result
+	}
+	// 记录入住任务完成 + 房卡事件
+	task := w.CreateTask(TaskCheckIn, guestID, w.HandlerOf(guestID))
+	w.CompleteTask(task.ID, map[string]interface{}{
+		"room": roomNumber, "status": "checked_in", "card": result,
+	})
+	w.Say(w.HandlerOf(guestID), "您好，您的房间 "+roomNumber+" 房卡已发放，祝您入住愉快！")
+	return true, roomNumber, result
+}
+
 // ---------- M8.3 业务工具驱动入住 ----------
 
 // RunCheckInFlow M8.3：让前台 Planner 自主完成 guest 的入住流程。
