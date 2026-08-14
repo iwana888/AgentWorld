@@ -34,19 +34,29 @@ type SpaceWorld struct {
 	agents map[int64]*Agent // 酒店员工
 	guests map[int64]*Guest // 客人
 	state  *interactionState // M8.2 角色/意图/对话/任务
+	tools  *HotelTool        // M8.3 酒店业务工具层
+	planner *FrontDeskPlanner // M8.3 前台自主决策引擎
 }
 
 // NewSpaceWorld 创建酒店空间世界。
 func NewSpaceWorld(hotelID, name, description string) *SpaceWorld {
-	space := NewSpace(hotelID, name, description)
-	return &SpaceWorld{
-		space:    space,
+	w := &SpaceWorld{
+		space:    NewSpace(hotelID, name, description),
 		bus:      NewEventBus(),
 		agents:   map[int64]*Agent{},
 		guests:   map[int64]*Guest{},
 		state:    newInteractionState(),
+		tools:    NewHotelTool(NewMockPMS()),
 	}
+	w.planner = NewFrontDeskPlanner(w.tools)
+	return w
 }
+
+// Tools 返回酒店业务工具层。
+func (w *SpaceWorld) Tools() *HotelTool { return w.tools }
+
+// Planner 返回前台决策引擎。
+func (w *SpaceWorld) Planner() *FrontDeskPlanner { return w.planner }
 
 // Space 返回空间。
 func (w *SpaceWorld) Space() *Space { return w.space }

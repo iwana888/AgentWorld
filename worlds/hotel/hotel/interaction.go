@@ -229,6 +229,37 @@ func (w *SpaceWorld) Tasks() []*HotelTask {
 	return out
 }
 
+// ---------- M8.3 业务工具驱动入住 ----------
+
+// RunCheckInFlow M8.3：让前台 Planner 自主完成 guest 的入住流程。
+// 它根据 guest 的 intent + 进度 + 工具结果，逐步调用 get_reservation / assign_room / check_in / create_key_card。
+// 返回 (是否完成, 房间号, 各步骤工具结果)。
+func (w *SpaceWorld) RunCheckInFlow(guestID int64, intent GuestIntent) (bool, string, []ToolResult) {
+	// 每次调用重置该 guest 的入住进度，重新走完整流程（这样能检测到"已入住"重复办理）
+	w.planner.Reset(guestID)
+	var results []ToolResult
+	for step := 0; step < 8; step++ { // 上限保护，避免死循环
+		res, tag := w.planner.NextStep(guestID, intent)
+		results = append(results, res)
+		switch tag {
+		case "no_reservation":
+			return false, "", results
+		case "no_room":
+			return false, "", results
+		case "already_checked_in":
+			return false, "", results
+		case "checked_in":
+			// 入住完成，但还要继续生成房卡（下次循环走 done → create_key_card）
+			continue
+		case "card_created":
+			// 全部完成（含房卡）
+			_, room := w.planner.Status(guestID)
+			return true, room, results
+		}
+	}
+	return false, "", results
+}
+
 // ---------- 模拟 Check-in ----------
 
 // CheckIn M8.2 模拟入住（不接 PMS，Hotel World 内存数据）。

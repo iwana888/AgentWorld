@@ -40,6 +40,9 @@ func (s *Server) Mux() *http.ServeMux {
 	mux.HandleFunc("/api/hotel/conversation", s.handleConversation)
 	mux.HandleFunc("/api/hotel/tasks", s.handleTasks)
 	mux.HandleFunc("/api/hotel/checkin", s.handleCheckIn)
+	// M8.3：业务工具
+	mux.HandleFunc("/api/hotel/run_checkin", s.handleRunCheckIn)
+	mux.HandleFunc("/api/hotel/tool_logs", s.handleToolLogs)
 	// 地图观察台（内嵌 map.html）
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -243,6 +246,34 @@ func (s *Server) handleCheckIn(w http.ResponseWriter, r *http.Request) {
 		"success": ok, "task": task.ID, "room": room,
 		"guest_name": req.GuestName, "status": "checked_in",
 	})
+}
+
+// runCheckInReq M8.3 业务入住请求。
+type runCheckInReq struct {
+	GuestID int64  `json:"guest_id"`
+	AgentID int64  `json:"agent_id"`
+}
+
+// handleRunCheckIn POST /api/hotel/run_checkin —— 让 FrontDesk Planner 自主完成入住。
+func (s *Server) handleRunCheckIn(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req runCheckInReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	ok, room, results := s.world.RunCheckInFlow(req.GuestID, IntentCheckIn)
+	writeJSON(w, map[string]interface{}{
+		"success": ok, "room": room, "steps": results,
+	})
+}
+
+// handleToolLogs GET /api/hotel/tool_logs —— 工具调用记录（Audit/Timeline）。
+func (s *Server) handleToolLogs(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, s.world.Tools().Logs())
 }
 
 func writeJSON(w http.ResponseWriter, v interface{}) {
