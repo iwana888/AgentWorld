@@ -59,6 +59,61 @@ Agent + World + Need + Goal + Plan + Memory
 
 ---
 
+## 上下文运行时（M8）
+
+M8 在「感知」与「LLM」之间新增了一层**上下文运行时（Context Runtime）**：每个 Think 智能体「看到」的内容由它确定性地组装、检索、压缩，而不是随意拼接 prompt。
+
+生命周期：
+
+```
+感知 → 检索 → 编译 → 压缩 → 适配 → 提供者（LLM）
+```
+
+核心概念：
+
+| 概念 | 说明 |
+|---|---|
+| **适配器**（`ContextAdapter`） | 把 `CompiledContext` 转成供提供者的消息。首个实现 `OpenAICompatibleAdapter`（Stable→system，State/Retrieved/Event/Decision→user）。单向依赖：适配器永不反向修改 Context 块。 |
+| **Token 估算器**（`TokenEstimator`） | 可注入的 token 计数器。首个实现 `RoughTokenEstimator`（字符数/4，不依赖具体提供者）。后续可无缝替换为 `DeepSeekTokenizer` / `OpenAITokenizer` / `AnthropicTokenizer`，**实验代码无需改动**——只依赖接口。 |
+| **Token 记账** | `TokenUsage` 刻意把**运行时上下文** token（Stable/State/Retrieved/Event/Decision/Compacted/Context）与**提供者** token（Input/Output/Total）分开，两层不合并。`TokenLedger` 聚合分位数（avg / P50 / P90 / P99）。 |
+| **MemoryRetriever + MemoryStore** | 按意图检索。`MemoryRetriever` 把 `Intent → 相关记忆类型` 映射并按预算截断。`MemoryStore` 是接口，已有真实 DB 实现与合成实现。 |
+| **稳定前缀** | Stable 块映射到 system 消息。对其哈希即可验证 KV-Cache 就绪度：N 次 Think 内 `unique(StablePrefixHash)` 应为 `1`。 |
+
+**M8 API 已冻结** —— `Compile` / `Compiler` / `Retriever` / `Compactor` / `Adapter` / `TokenLedger` 的公开签名锁定。允许：实现已有接口、跑实验、加观测、修 bug。
+
+### M8 实验第一轮（不接真实 LLM）
+
+为测量「上下文运行时本身产生了什么」，我们做了一组严格的 A/B，**全程不调用 LLM**——两条路径共用**同一个注入的 `RoughTokenEstimator`**，唯一变量就是「感知与 token 计数器之间是否经过上下文运行时」：
+
+```
+Baseline ：经济感知 → 原始 prompt → TokenEstimator
+Context  ：经济感知 → 上下文运行时 → 适配器 → TokenEstimator
+```
+
+- **合成记忆**（`SyntheticMemoryStore`）：为单个智能体生成可控数据——WORK 相关（`work`/`self`/`skill_exp`）、HIRE_AGENT 相关（`hire`/`about_agent`/`contract`）、外加 100 条无关噪声记忆。可精确断言「意图→检索」。
+- **两个阶段**：Phase A（100 次 Think）验证实验完整性（估算器、检索器、意图分布、不超预算、稳定前缀）；Phase B（1000 次 Think）产出最终报告。
+- **回答 5 个问题**：（Q1）平均每次 Context 大小，（Q2）意图→检索映射，（Q3）检索占上下文比例，（Q4）压缩是否发生，（Q5）稳定前缀唯一性。
+
+运行：
+
+```bash
+go run ./experiments/m8/cmd/m8
+```
+
+第一轮代表性结果（N=1000）：
+
+| 问题 | 结果 |
+|---|---|
+| Q1 平均 Context/Think | 上下文运行时 **318** token（P50 270 / P99 367）对比 Baseline 原始 prompt **2074** token → 缩小约 4.4× |
+| Q2 意图→检索 | WORK→`work`/`self`/`skill_exp`；HIRE_AGENT→`hire`/`about_agent`/`contract`（无噪声泄漏） |
+| Q3 检索/上下文 | 87.9% 的上下文 token 来自检索；共检索 17/130 条记忆 |
+| Q4 压缩 | 0% —— 第一轮上下文未触及预算压力（符合预期） |
+| Q5 稳定前缀 | 唯一哈希 = **1** → KV-Cache 安全 |
+
+> 实验第二轮（真实提供者 + 真实记忆 + 真实决策）是独立步骤，刻意不与第一轮混在一起。
+
+---
+
 ## 内置世界（Demo）
 
 | 世界 | 证明什么 | 示例 |

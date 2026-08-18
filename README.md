@@ -57,6 +57,61 @@ Multiple agents autonomously live and cooperate inside one or more worlds, and c
 
 ---
 
+## Context Runtime (M8)
+
+M8 adds a **Context Runtime** that sits between Perception and the LLM, so that what an agent "sees" each Think is assembled, retrieved, and compacted deterministically rather than by ad-hoc prompt concatenation.
+
+Lifecycle:
+
+```
+Perception → Retrieve → Compile → Compact → Adapt → Provider (LLM)
+```
+
+Key ideas:
+
+| Concept | What it is |
+|---|---|
+| **Adapter** (`ContextAdapter`) | Turns a `CompiledContext` into provider messages. First implementation is `OpenAICompatibleAdapter` (Stable→system, State/Retrieved/Event/Decision→user). One-way dependency: the Adapter never mutates Context blocks. |
+| **TokenEstimator** (`TokenEstimator`) | Injectable token counter. `RoughTokenEstimator` is the first implementation (chars/4, provider-independent). Swap in `DeepSeekTokenizer` / `OpenAITokenizer` / `AnthropicTokenizer` later **without changing experiment code** — it only depends on the interface. |
+| **Token Accounting** | `TokenUsage` keeps **Runtime Context** tokens (Stable/State/Retrieved/Event/Decision/Compacted/Context) separate from **Provider** tokens (Input/Output/Total). The two layers are deliberately *not* merged. `TokenLedger` aggregates percentiles (avg / P50 / P90 / P99). |
+| **MemoryRetriever + MemoryStore** | Intent-driven retrieval. `MemoryRetriever` maps `Intent → related memory types` and truncates by budget. `MemoryStore` is an interface; a real DB implementation and a synthetic one both exist. |
+| **Stable Prefix** | The Stable block maps to the system message. Hashing it lets us verify KV-Cache readiness: across N Thinks, `unique(StablePrefixHash)` should be `1`. |
+
+**M8 API is frozen** — `Compile` / `Compiler` / `Retriever` / `Compactor` / `Adapter` / `TokenLedger` public signatures are locked. Allowed: implement existing interfaces, run experiments, add observability, fix bugs.
+
+### M8 Experiment Round 1 (no real LLM)
+
+To measure what the Context Runtime itself produces, we run a strict A/B with **no LLM call** — both paths share the **same injected `RoughTokenEstimator`**, so the only variable is whether the Context Runtime sits between Perception and the token counter:
+
+```
+Baseline : Economy Perception → raw prompt → TokenEstimator
+Context  : Economy Perception → Context Runtime → Adapter → TokenEstimator
+```
+
+- **Synthetic Memory** (`SyntheticMemoryStore`): controllable data for one agent — WORK-related (`work`/`self`/`skill_exp`), HIRE_AGENT-related (`hire`/`about_agent`/`contract`), plus 100 unrelated noise memories. Lets us assert Intent→Retrieval precisely.
+- **Two phases**: Phase A (100 Thinks) validates experiment integrity (estimator, retriever, intent spread, no over-budget, stable prefix); Phase B (1000 Thinks) produces the final report.
+- **Answers 5 questions**: (Q1) avg Context/Think, (Q2) Intent→Retrieval mapping, (Q3) Retrieved/Context ratio, (Q4) whether compaction fired, (Q5) Stable Prefix uniqueness.
+
+Run it:
+
+```bash
+go run ./experiments/m8/cmd/m8
+```
+
+Representative Round-1 result (N=1000):
+
+| Question | Result |
+|---|---|
+| Q1 avg Context/Think | Context Runtime **318** tok (P50 270 / P99 367) vs Baseline raw prompt **2074** tok → ~4.4× smaller |
+| Q2 Intent→Retrieval | WORK→`work`/`self`/`skill_exp`; HIRE_AGENT→`hire`/`about_agent`/`contract` (no noise leaked) |
+| Q3 Retrieved/Context | 87.9% of Context tokens come from retrieval; 17/130 memories retrieved |
+| Q4 Compaction | 0% — Context never hit budget pressure in round 1 (expected) |
+| Q5 Stable Prefix | unique hash = **1** → KV-Cache safe |
+
+> Experiment 2 (real Provider + real Memory + real decisions) is a separate step and intentionally not mixed with round 1.
+
+---
+
 ## Demo Worlds
 
 | World | Proves | Example |

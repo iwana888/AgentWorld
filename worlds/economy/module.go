@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	ctxrt "agentworld/internal/context"
 	"agentworld/internal/skill"
 	"agentworld/sdk"
 	"agentworld/worlds/economy/economy"
@@ -34,7 +35,7 @@ func New(agentIDs []int64, names []string, personalities []string, obs *goose.Ob
 	w := economy.NewWorld(agentIDs, names, personalities, obs, reg)
 	return &Module{
 		world:    w,
-		planner:  &planner{world: w, skills: reg},
+		planner:  &planner{world: w, skills: reg, obs: obs},
 		executor: &executor{world: w},
 		skills:   reg,
 	}
@@ -105,6 +106,10 @@ type planner struct {
 	world  *economy.World
 	rt     sdk.Runtime
 	skills *skill.Registry
+	obs    *goose.Observatory // M8 旁路观察台（可为 nil）
+	// retriever M8.7 接线：真实 Economy Memory 检索器（nil 表示不检索）。
+	// 仅用于 observeContext 旁路观察，不参与决策。
+	retriever ctxrt.Retriever
 }
 
 // Decide 自主决策：基于经济状态 + 职业 + 性格 + 目标，判断"现在该做什么最有利"。
@@ -115,9 +120,103 @@ func (p *planner) Decide(ctx context.Context, a sdk.Agent, perc sdk.Perception) 
 		return &sdk.Decision{Action: "idle", Reason: "世界还没准备好"}, nil
 	}
 	dec := p.decideEconomically(v)
+
+	// M8 Context Runtime（旁路 Observatory）：不改变 Economy 决策，仅额外把
+	// Perception + Planner 候选喂给 ContextEngine，编译出 CompiledContext 并发布，
+	// 用于观察"AgentWorld 的 Context 到底长什么样"。不调用 LLM、不介入决策。
+	p.observeContext(ctx, v)
+
 	// 记录"为什么"（复用 M8 DecisionRecord 概念）
 	p.world.RecordDecision(v.AgentID, buildWhy(v, dec))
 	return dec, nil
+}
+
+// ctxEngine M8 Context Runtime 引擎实例（旁路观察用，默认 Rough 估算）。
+var ctxEngine = ctxrt.NewCompiler(nil)
+
+// WithRetriever M8.7 接线：注入真实 Memory 检索器（如 db.NewDBMemoryStore 适配）。
+// 仅用于 observeContext 旁路观察，不参与 Economy 决策。传 nil 关闭检索。
+func (m *Module) WithRetriever(r ctxrt.Retriever) *Module {
+	m.planner.retriever = r
+	return m
+}
+
+// observeContext M8：用现有 Perception + Planner 候选构造 ContextRequest，
+// 编译为 CompiledContext 并发布到 Observatory。这是最小集成，不改动任何决策逻辑。
+func (p *planner) observeContext(ctx context.Context, v *economy.Perception) {
+	if p.obs == nil {
+		return
+	}
+	// 1) DecisionIntent：从当前经济态势推断意图类型（仅用于 Context 分类，不影响决策）。
+	intent := &ctxrt.DecisionIntent{Type: "WORK"}
+	if missing := p.missingSkillOpportunity(v); missing != "" {
+		intent.Type = "HIRE_AGENT"
+		intent.SkillID = missing
+		opts := p.PlanOptions(v)
+		for _, o := range opts {
+			if o != nil && o.Action == "hire_agent" && o.Target != 0 {
+				intent.TargetAgentID = itoaInt64(o.Target)
+				break
+			}
+		}
+	}
+	// 2) CandidateActions：来自 Planner 候选。
+	var cands []*ctxrt.CandidateAction
+	for _, o := range p.PlanOptions(v) {
+		if o == nil {
+			continue
+		}
+		cands = append(cands, &ctxrt.CandidateAction{
+			ID: o.Action + ":" + o.Content, Action: o.Action, Label: o.Reason,
+			Cost: o.Cost, Reward: o.Reward, Score: o.Score,
+		})
+	}
+	// 3) Stable Blocks：世界规则 + 身份 + 性格 + 技能（技能在 Semi-Stable，这里并入 Stable 组）。
+	stable := []ctxrt.ContextBlock{
+		{ID: "world.rules", Type: ctxrt.TypeWorldRules, Source: "world.rules",
+			Content: "经济世界规则：打工赚币、市场买技能、劳动力市场雇人、余额决定投资能力。", Priority: 100, Stable: true},
+		{ID: "agent.identity", Type: ctxrt.TypeAgentIdentity, Source: "agent.identity",
+			Content: fmt.Sprintf("名字: %s 职业: %s ID: %d", v.Name, v.Profession, v.AgentID), Priority: 95, Stable: true},
+		{ID: "agent.personality", Type: ctxrt.TypePersonality, Source: "agent.personality",
+			Content: "性格: " + v.Personality, Priority: 90, Stable: true},
+	}
+	for _, s := range v.Skills {
+		stable = append(stable, ctxrt.ContextBlock{
+			ID: "skill:" + s.SkillID, Type: ctxrt.TypeSkill, Source: "skill." + s.SkillID,
+			Content: fmt.Sprintf("技能: %s (Lv%d)", s.SkillID, s.Level), Priority: 80, Stable: true,
+		})
+	}
+	// 4) Dynamic Blocks：状态 + 近期事件。
+	dyn := []ctxrt.ContextBlock{
+		{ID: "agent.state", Type: ctxrt.TypeAgentState, Source: "agent.state", Priority: 70, Stable: false,
+			Content: fmt.Sprintf("余额: %d coins 财富排名: %d/%d 目标: %s", v.Balance, v.WealthRank, v.AgentCount, v.Goal)},
+	}
+	if len(v.OpenJobs) > 0 {
+		dyn = append(dyn, ctxrt.ContextBlock{
+			ID: "recent.events", Type: ctxrt.TypeEvent, Source: "recent.events", Priority: 50, Stable: false,
+			Content: fmt.Sprintf("市场开放工作数: %d，当前技能缺口: %s", len(v.OpenJobs), missingSkillName(v)),
+		})
+	}
+	// 5) 编译并发布（不进 LLM）。
+	req := &ctxrt.ContextRequest{
+		AgentID:         itoaInt64(v.AgentID),
+		AgentState:      &ctxrt.AgentState{AgentID: itoaInt64(v.AgentID), Balance: int(v.Balance), Location: "economy", Goal: v.Goal, Intent: intent.Type},
+		DecisionIntent:  intent,
+		CandidateActions: cands,
+		StableBlocks:    stable,
+		DynamicBlocks:   dyn,
+		Retriever:       p.retriever, // M8.7 接线：真实 Memory 检索（nil 则跳过）
+	}
+	cc, err := ctxEngine.Compile(ctx, req)
+	if err != nil {
+		return
+	}
+	p.obs.Publish("m8.context", map[string]interface{}{
+		"agent":   v.Name,
+		"intent":  intent.Type,
+		"context": cc,
+		"snapshot": cc.String(),
+	})
 }
 
 // decideEconomically 核心决策逻辑：多因素权衡。
@@ -204,6 +303,45 @@ func (p *planner) selectBestOption(options []*EconomicOption) *EconomicOption {
 		}
 	}
 	return best
+}
+
+// PlanOptions M8 Observatory（旁路）：复用 decideEconomically 的候选生成逻辑，
+// 但不做任何选择——只把当前可候选的 EconomicOption 列出来，供 Context Runtime
+// 构造 DecisionContext。完全不改决策行为：Decide 仍用 decideEconomically 的结果。
+//
+// 这是 M8.1~M8.5 的"最小 Observability 集成"：不影响 Economy 既有决策、不调 LLM，
+// 只在 Planner 产出候选后，额外把候选喂给 ContextEngine 编译并打印 CompiledContext。
+func (p *planner) PlanOptions(v *economy.Perception) []*EconomicOption {
+	opts := []*EconomicOption{}
+	if v.IsBusy {
+		return opts // 忙碌时不产生经济候选
+	}
+	if missing := p.missingSkillOpportunity(v); missing != "" {
+		opts = append(opts,
+			p.evaluateBuyOption(v, missing),
+			p.evaluateHireOption(v, missing),
+			p.evaluateWaitOption(v, missing),
+		)
+		return opts
+	}
+	if j := p.evaluateJob(v); j != nil {
+		// evaluateJob 返回的是 sdk.Decision，这里不纳入候选比较（它直接可执行）。
+		// 但为了让 Context 看到"可接工作"，仍构造一个 do_job 候选。
+		opts = append(opts, &EconomicOption{
+			Action: "do_job", Cost: 0, Reward: 0, Score: 0.8, Content: j.Content, Reason: j.Reason,
+		})
+	}
+	if v.Balance >= 60 {
+		if d := p.evaluateSkill(v); d != nil {
+			opts = append(opts, &EconomicOption{Action: "buy_skill", Cost: 0, Reward: 0,
+				Score: 0.7, Content: d.Content, Reason: d.Reason})
+		}
+		if d := p.evaluateTradeOrConsume(v); d != nil {
+			opts = append(opts, &EconomicOption{Action: d.Action, Cost: 0, Reward: 0,
+				Score: 0.6, Content: d.Content, Reason: d.Reason})
+		}
+	}
+	return opts
 }
 
 // optionToDecision 把 EconomicOption 转成 sdk.Decision。
@@ -513,6 +651,27 @@ func workerName(v *economy.Perception, id int64) string {
 // itoaInt64 简易 int64 转字符串（module 包本地）。
 func itoaInt64(v int64) string { return fmt.Sprintf("%d", v) }
 
+// missingSkillName 返回缺失技能的可读名字（M8 DecisionIntent 展示用）。
+func missingSkillName(v *economy.Perception) string {
+	missing := ""
+	for i := range v.OpenJobs {
+		j := &v.OpenJobs[i]
+		if v.SkillLevel(j.Skill) <= 0 || v.SkillLevel(j.Skill) < j.MinLevel {
+			missing = j.Skill
+			break
+		}
+	}
+	if missing == "" {
+		return "无"
+	}
+	for i := range v.Market {
+		if v.Market[i].SkillID == missing {
+			return v.Market[i].Name
+		}
+	}
+	return missing
+}
+
 // evaluateJob 评估是否接受某份工作：综合报酬、技能匹配、当前余额、性格风险偏好。
 // 关键（M7 技能隔离）：Agent 只能选择它拥有技能对应的工作。
 // 没有对应技能的岗位，即使报酬再高，这个 Agent 也不会选（不能调用它没有的工具）。
@@ -691,32 +850,9 @@ func (p *planner) evaluateSkill(v *economy.Perception) *sdk.Decision {
 		default:
 			ev.Risk = "Low"
 		}
-		// 收益吸引力：新技能收入 vs 当前收入（提升越大越值得）
-		incomeUp := ev.ExpectedIncome - ev.CurrentIncome
-		// 回收期（几单回本）：越短越划算
-		payback := int64(0)
-		if ev.ExpectedIncome > 0 {
-			payback = (off.Price + ev.ExpectedIncome - 1) / ev.ExpectedIncome
-		}
-		// 综合评分（0~1）：回收期 + 收入提升 + 风险
-		score := 0.0
-		switch {
-		case payback <= 2:
-			score += 0.5 // 2 单内回本：很值
-		case payback <= 5:
-			score += 0.35
-		case payback <= 10:
-			score += 0.2
-		}
-		if incomeUp > 0 {
-			score += 0.3 // 能提升收入
-		}
-		switch ev.Risk {
-		case "Low":
-			score += 0.2
-		case "Medium":
-			score += 0.1
-		}
+		// 综合评分基础分：复用 evalScore（回收期 + 收入提升 + 风险三段），
+		// 与下方 best 比较使用的 p.evalScore(best) 同源，避免两处评分逻辑漂移。
+		score := p.evalScore(ev)
 		// 性格修正：冒险者更愿意冒风险投资；稳健者要求更低风险
 		riskTolerance := 0.0
 		if strings.Contains(v.Personality, "冒险") || strings.Contains(v.Personality, "大胆") || strings.Contains(v.Personality, "追求") || strings.Contains(v.Personality, "独立") {

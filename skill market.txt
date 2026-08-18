@@ -1,0 +1,987 @@
+可以。这个需求我建议不要写成“商城功能需求”，而是写成 **Economy World 的 Skill Marketplace + Agent 自主技能投资系统**。重点放在“技能购买会改变 Agent 后续行为”。
+
+# Economy World — Skill Marketplace 需求说明书
+
+## 1. 项目目标
+
+在 Economy World 中增加 **Skill Marketplace（技能市场）**。
+
+技能不再只是 Agent 的静态属性，而是一种可以被 Agent：
+
+* 发现
+* 评估
+* 购买
+* 学习
+* 升级
+* 使用
+* 出售/提供服务
+
+的经济资源。
+
+系统最终需要验证：
+
+> **当 Agent 面临有限资金和不同收益机会时，是否会自主投资未来能力，并因此改变自己的经济行为。**
+
+核心不是“让 Agent 买技能”，而是观察：
+
+```text
+资源有限
+   ↓
+发现技能
+   ↓
+评估成本 / 收益
+   ↓
+自主决策
+   ↓
+购买 Skill
+   ↓
+能力变化
+   ↓
+工作机会变化
+   ↓
+收入变化
+   ↓
+再次决策
+```
+
+---
+
+# 2. 核心原则
+
+### 2.1 不由系统强制购买
+
+系统不能写死：
+
+```text
+余额 > 100
+→ 自动购买 Engineer
+```
+
+而应该由 Agent 自己决定：
+
+```text
+Perception
+    ↓
+Planner
+    ↓
+Reasoning
+    ↓
+Decision
+    ↓
+buy_skill
+```
+
+---
+
+### 2.2 Skill 必须真正影响行为
+
+购买 Skill 后必须产生实际影响。
+
+例如：
+
+```text
+Courier
+```
+
+只能：
+
+```text
+Deliver Package
+```
+
+购买：
+
+```text
+Engineer
+```
+
+以后才能看到：
+
+```text
+Repair Machine
+Repair Factory
+Maintain Equipment
+```
+
+否则 Skill Marketplace 只是一个 UI。
+
+---
+
+### 2.3 Skill 是经济资源
+
+Skill 应该具有：
+
+```text
+购买成本
+使用价值
+稀缺程度
+等级
+收益能力
+市场需求
+```
+
+---
+
+# 3. Skill 数据模型
+
+新增：
+
+```text
+Skill
+```
+
+字段建议：
+
+| 字段          | 说明       |
+| ----------- | -------- |
+| id          | Skill ID |
+| name        | 技能名称     |
+| description | 技能描述     |
+| category    | 技能分类     |
+| base_price  | 基础价格     |
+| max_level   | 最大等级     |
+| enabled     | 是否启用     |
+| created_at  | 创建时间     |
+
+例如：
+
+```text
+Engineer
+Trader
+Miner
+Doctor
+Chef
+Courier
+Researcher
+```
+
+---
+
+# 4. Agent Skill
+
+Agent 与 Skill 建立关系：
+
+```text
+AgentSkill
+```
+
+建议字段：
+
+| 字段          | 说明    |
+| ----------- | ----- |
+| agent_id    | Agent |
+| skill_id    | Skill |
+| level       | 当前等级  |
+| experience  | 技能经验  |
+| acquired_at | 获得时间  |
+| source      | 获得方式  |
+
+source：
+
+```text
+purchase
+learn
+reward
+initial
+```
+
+例如：
+
+```text
+Alice
+
+Engineer
+Lv3
+EXP 240
+```
+
+---
+
+# 5. Skill Level
+
+Skill 支持等级。
+
+例如：
+
+```text
+Engineer Lv1
+Engineer Lv2
+Engineer Lv3
+Engineer Lv4
+Engineer Lv5
+```
+
+不同等级对应不同能力。
+
+例如：
+
+```text
+Engineer Lv1
+→ Repair Machine
+
+Engineer Lv2
+→ Maintain Factory
+
+Engineer Lv3
+→ Repair Reactor
+
+Engineer Lv4
+→ Complex Engineering
+
+Engineer Lv5
+→ Engineering Contract
+```
+
+等级越高：
+
+```text
+可执行任务更多
+任务收益更高
+服务价格更高
+```
+
+---
+
+# 6. Skill Marketplace
+
+新增技能市场。
+
+前端展示：
+
+```text
+Skill Marketplace
+
+┌───────────────────────────────┐
+│ Engineer                      │
+│ Repair & maintenance         │
+│                               │
+│ Price: 100 coins              │
+│ Owners: 3                     │
+│ Demand: High                  │
+│                               │
+│ [View]                        │
+└───────────────────────────────┘
+```
+
+市场支持：
+
+```text
+全部
+Engineer
+Trader
+Miner
+Doctor
+Chef
+Courier
+Researcher
+```
+
+排序：
+
+```text
+价格
+需求
+稀缺度
+收益
+拥有者数量
+```
+
+---
+
+# 7. Agent 查看 Skill
+
+Agent 可以通过 Perception 获得：
+
+```text
+observe_market
+```
+
+返回：
+
+```json
+{
+  "skills": [
+    {
+      "skill": "engineer",
+      "price": 100,
+      "owners": 3,
+      "demand": 0.82,
+      "avg_income": 31
+    }
+  ]
+}
+```
+
+Agent 不需要知道系统内部数据库。
+
+它只看到：
+
+> 当前世界中可获得的信息。
+
+---
+
+# 8. Agent Skill 评估
+
+新增工具：
+
+```text
+evaluate_skill
+```
+
+Agent 可以比较：
+
+```text
+当前收入
+Skill 成本
+预计收益
+当前余额
+工作机会
+风险
+```
+
+例如：
+
+```text
+Balance: 120
+
+Current:
+Courier
+Average Income: 12
+
+Engineer:
+Cost: 100
+Average Income: 31
+Available Jobs: 4
+```
+
+Agent 自己判断：
+
+```text
+BUY
+```
+
+也可以：
+
+```text
+DON'T BUY
+```
+
+甚至：
+
+```text
+WAIT
+```
+
+---
+
+# 9. Skill Purchase
+
+新增 Action：
+
+```text
+buy_skill
+```
+
+请求：
+
+```json
+{
+  "skill_id": "engineer"
+}
+```
+
+系统检查：
+
+```text
+Skill 是否存在
+        ↓
+Agent 是否已经拥有
+        ↓
+Agent 是否满足购买条件
+        ↓
+余额是否足够
+        ↓
+扣款
+        ↓
+增加 AgentSkill
+```
+
+交易完成后产生 Event：
+
+```text
+SkillPurchased
+```
+
+例如：
+
+```text
+Alice purchased Engineer Lv1
+
+Balance:
+120 → 20
+```
+
+---
+
+# 10. Skill 对工作系统的影响
+
+这是整个需求最重要的一部分。
+
+Job 必须声明 Skill Requirement。
+
+例如：
+
+```text
+Job: Repair Machine
+
+Required Skill:
+Engineer Lv1
+
+Reward:
+35 coins
+```
+
+另一个：
+
+```text
+Job: Repair Reactor
+
+Required Skill:
+Engineer Lv3
+
+Reward:
+80 coins
+```
+
+Agent 只有满足条件才能执行。
+
+因此：
+
+```text
+Skill
+ ↓
+Job Eligibility
+ ↓
+Job Selection
+ ↓
+Income
+```
+
+真正形成经济闭环。
+
+---
+
+# 11. Skill 收益计算
+
+每个 Job 可以根据 Skill Level 调整收益。
+
+例如：
+
+```text
+Base Reward = 30
+```
+
+Engineer：
+
+```text
+Lv1 → 30
+Lv2 → 36
+Lv3 → 45
+Lv4 → 60
+Lv5 → 80
+```
+
+这样 Agent 会发现：
+
+> 升级 Skill 本身也是一种投资。
+
+---
+
+# 12. Agent-to-Agent 服务
+
+后续支持 Agent 雇佣其他 Agent。
+
+例如：
+
+```text
+Bob
+没有 Engineer
+```
+
+Bob 发现：
+
+```text
+Repair Machine
+```
+
+可以：
+
+```text
+Hire Alice
+```
+
+Alice：
+
+```text
+Engineer Lv5
+```
+
+Bob 支付：
+
+```text
+20 coins
+```
+
+Alice 完成：
+
+```text
+Repair Machine
+```
+
+最终：
+
+```text
+Bob
+-20
+
+Alice
++20
+```
+
+于是 Economy World 出现：
+
+```text
+Skill Market
+      +
+Labor Market
+      +
+Agent-to-Agent Economy
+```
+
+---
+
+# 13. Skill 稀缺性
+
+系统统计：
+
+```text
+Skill Owners
+Skill Demand
+Skill Jobs
+Skill Average Income
+```
+
+例如：
+
+```text
+Researcher
+
+Owners: 1
+Demand: High
+Average Income: 65
+```
+
+市场可以计算：
+
+```text
+Scarcity
+```
+
+基本公式：
+
+```text
+Scarcity =
+Demand / NumberOfOwners
+```
+
+稀缺 Skill 可以成为高价值能力。
+
+---
+
+# 14. Skill 市场价格
+
+第一阶段建议：
+
+**固定价格。**
+
+例如：
+
+```text
+Engineer = 100
+Doctor = 120
+Miner = 80
+```
+
+第二阶段再增加动态价格：
+
+```text
+Demand ↑
+→ Price ↑
+
+Demand ↓
+→ Price ↓
+```
+
+这样最终可能形成：
+
+```text
+Skill Supply
+      ↓
+Skill Demand
+      ↓
+Market Price
+      ↓
+Agent Decision
+```
+
+---
+
+# 15. Skill Marketplace 页面
+
+建议新增：
+
+```text
+/marketplace/skills
+```
+
+页面分成四部分。
+
+### Market Overview
+
+```text
+Total Skills       12
+Total Owners       20
+Transactions       87
+Total Skill Value  3,420
+```
+
+### Skill Ranking
+
+```text
+Most Popular
+Engineer
+
+Most Demanded
+Doctor
+
+Rarest
+Researcher
+
+Fastest Growing
+Trader
+```
+
+### Skill List
+
+```text
+Skill       Price    Owners    Demand    Income
+
+Engineer    100      3         High      31
+Doctor      120      2         High      42
+Miner        80      4         Medium    25
+Trader       60      5         Medium    22
+```
+
+### Skill Detail
+
+点击：
+
+```text
+Engineer
+```
+
+展示：
+
+```text
+Description
+
+Price:
+100 coins
+
+Owners:
+3
+
+Demand:
+82%
+
+Average Income:
+31 coins/job
+
+Available Jobs:
+Repair Machine
+Repair Factory
+Repair Reactor
+
+Owners:
+Alice Lv7
+Bob Lv4
+Charlie Lv2
+```
+
+---
+
+# 16. Agent Timeline
+
+必须记录 Skill 行为。
+
+例如：
+
+```text
+10:21
+Alice observed Skill Marketplace
+
+10:21
+Alice evaluated Engineer
+
+10:21
+Alice purchased Engineer Lv1
+
+10:22
+Alice changed occupation
+
+10:24
+Alice completed Repair Machine
+
+10:24
+Alice earned 35 coins
+```
+
+---
+
+# 17. Why / Decision
+
+这是 Economy World 非常重要的一层。
+
+当 Agent 购买 Skill 时记录：
+
+```text
+Decision
+
+Agent:
+Alice
+
+Action:
+Buy Engineer
+
+Balance:
+120
+
+Skill Price:
+100
+
+Current Job:
+Courier
+
+Expected Courier Income:
+12
+
+Expected Engineer Income:
+31
+
+Reason:
+Engineer provides higher expected income
+and enough future opportunities.
+```
+
+最终 Observatory 可以直接看到：
+
+```text
+Why did Alice buy Engineer?
+
+Because:
+
+Expected income +158%
+Skill cost 100
+Current balance 120
+Available Engineer jobs 4
+```
+
+---
+
+# 18. 失败与风险
+
+不要保证 Agent 买 Skill 后一定赚钱。
+
+例如：
+
+```text
+Alice
+Balance: 100
+
+购买 Engineer
+Balance: 0
+
+但是：
+
+Engineer Jobs:
+0
+```
+
+可能导致：
+
+```text
+收入下降
+现金流危机
+重新选择工作
+出售资产
+寻找雇主
+借款
+```
+
+这非常重要。
+
+因为只有存在失败：
+
+> **Agent 的决策才真正有意义。**
+
+---
+
+# 19. 统计指标
+
+Economy World 增加：
+
+### Skill Economy
+
+```text
+Total Skill Purchases
+Skill Purchase Volume
+Most Purchased Skill
+Most Valuable Skill
+Rarest Skill
+Average Skill Level
+```
+
+### Agent Behavior
+
+```text
+Agents Investing in Skills
+Agents Avoiding Skills
+Average Investment Rate
+Average Payback Period
+Skill-driven Career Changes
+```
+
+### Economic Impact
+
+```text
+Skill Investment
+        ↓
+Income Change
+        ↓
+Wealth Change
+```
+
+---
+
+# 20. 第一阶段 MVP
+
+第一版不要做太复杂。
+
+只实现：
+
+```text
+Skill
+AgentSkill
+Skill Marketplace
+buy_skill
+Skill → Job Requirement
+Skill → Job Income
+Skill Purchase Event
+Timeline
+```
+
+暂时不做：
+
+```text
+Skill 玩家交易
+Skill 转让
+动态价格
+借贷
+Skill NFT
+复杂技能树
+```
+
+第一阶段只验证：
+
+```text
+Agent
+ ↓
+发现 Skill
+ ↓
+自主购买
+ ↓
+获得新工作
+ ↓
+赚钱
+ ↓
+行为改变
+```
+
+---
+
+# 21. 第二阶段
+
+加入：
+
+```text
+Skill Level
+Skill Experience
+Skill Upgrade
+Agent-to-Agent Hiring
+Skill Demand
+Skill Scarcity
+```
+
+形成：
+
+```text
+Skill
+ ↓
+Level
+ ↓
+Job
+ ↓
+Income
+ ↓
+Demand
+ ↓
+Market Value
+```
+
+---
+
+# 22. 第三阶段：真正的 Agent Economy
+
+最终形成：
+
+```text
+                 ┌──────────────┐
+                 │ Skill Market │
+                 └──────┬───────┘
+                        │
+                    Purchase
+                        │
+                        ▼
+┌─────────┐       ┌──────────┐
+│  Agent  │───────▶│   Skill  │
+└────┬────┘       └────┬─────┘
+     │                 │
+     │                 ▼
+     │              New Jobs
+     │                 │
+     ▼                 ▼
+  Decision ────────▶ Income
+     ▲                 │
+     │                 ▼
+     └──────────── Wealth
+```
+
+最终 Economy World 就不只是：
+
+> **20 个 Agent 在模拟打工。**
+
+而是：
+
+> **20 个拥有不同能力、资源、目标和风险偏好的 Agent，在同一个有限资源世界里，自主进行职业投资、劳动、交易和竞争。**
+
+这时候 **Skill Marketplace 会成为 Economy World 的核心实验设施，而不是一个附属功能。**

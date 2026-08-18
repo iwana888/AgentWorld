@@ -55,10 +55,16 @@ func (c *Client) Enabled() bool { return c.apiKey != "" }
 // ModelName 当前使用的模型名
 func (c *Client) ModelName() string { return c.model }
 
-type chatMsg struct {
+// Message 是 OpenAI-compatible 协议中的一条聊天消息（system/user/assistant）。
+// 作为 Context Runtime 与 Provider 之间的通用传输结构：ContextAdapter 产出
+// []Message，Client.Decide 消费它。导出以便 context 包等 Runtime 模块复用。
+type Message struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
 }
+
+// chatMsg 保留旧别名，避免外部引用破坏（已统一用 Message）。
+type chatMsg = Message
 
 type chatReq struct {
 	Model          string    `json:"model"`

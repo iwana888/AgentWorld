@@ -1,0 +1,1044 @@
+# AgentWorld M6：Agent-to-Agent Economy 需求说明书
+
+## 1. 一句话定义
+
+**让 Agent 不再只能“自己工作赚钱”，而是可以雇佣其他 Agent、出售自己的技能、承接任务并进行服务交易。**
+
+M5 解决：
+
+> **Agent 会不会投资自己的能力？**
+
+M6 继续验证：
+
+> **Agent 会不会利用其他 Agent 的能力来提高自己的收益？**
+
+最终形成：
+
+```text
+Skill Marketplace
+      ↓
+Labor Market
+      ↓
+Agent-to-Agent Economy
+      ↓
+财富流动
+```
+
+---
+
+# 2. M6 核心目标
+
+M6 不做传统“NPC 商店”。
+
+重点是让交易双方都是自主 Agent：
+
+```text
+Buyer Agent
+    ↓
+发现自己缺少能力
+    ↓
+寻找其他 Agent
+    ↓
+比较价格 / 技能 / 声誉
+    ↓
+决定是否雇佣
+    ↓
+支付
+    ↓
+Seller Agent 执行任务
+    ↓
+获得收入 / 声誉 / Skill EXP
+```
+
+---
+
+# 3. 核心场景
+
+例如世界中：
+
+```text
+Bob
+Skills:
+Miner Lv3
+
+需要：
+Repair Machine
+
+但 Bob：
+Engineer ❌
+```
+
+世界中：
+
+```text
+Alice
+Engineer Lv5
+
+服务价格：
+20 coins
+```
+
+Bob 可以选择：
+
+```text
+方案 A：
+购买 Engineer
+成本 100
+
+方案 B：
+雇佣 Alice
+成本 20
+```
+
+Bob 自主判断：
+
+```text
+Hire Alice
+```
+
+交易：
+
+```text
+Bob
+-20 coins
+
+Alice
++20 coins
+```
+
+Alice 完成：
+
+```text
+Repair Machine
+```
+
+---
+
+# 4. 新增 Labor Market
+
+新增：
+
+```text
+Labor Market
+```
+
+它不是简单招聘页面，而是世界中的**服务发现机制**。
+
+Agent 可以查询：
+
+```text
+Available Services
+```
+
+例如：
+
+```text
+Repair Machine
+
+Available Workers:
+
+Alice
+Engineer Lv5
+Price: 20
+Success Rate: 96%
+
+Charlie
+Engineer Lv3
+Price: 12
+Success Rate: 78%
+
+David
+Engineer Lv2
+Price: 8
+Success Rate: 65%
+```
+
+Agent 自己选择。
+
+---
+
+# 5. Service 数据模型
+
+新增：
+
+```text
+Service
+```
+
+建议：
+
+| 字段             | 说明       |
+| -------------- | -------- |
+| id             | 服务 ID    |
+| name           | 服务名称     |
+| description    | 描述       |
+| required_skill | 所需 Skill |
+| min_level      | 最低等级     |
+| base_price     | 基础价格     |
+| enabled        | 是否启用     |
+
+例如：
+
+```text
+RepairMachine
+
+Required:
+Engineer Lv1
+
+Base Price:
+20
+```
+
+---
+
+# 6. Agent Service Offer
+
+Agent 可以提供自己的服务。
+
+新增：
+
+```text
+AgentService
+```
+
+例如：
+
+```text
+Alice
+
+Engineer Lv5
+
+Services:
+Repair Machine
+Repair Factory
+Maintain Equipment
+```
+
+Agent 可以自主决定：
+
+```text
+是否提供服务
+服务价格
+是否接受订单
+```
+
+第一版可以由系统根据 Skill 自动生成：
+
+```text
+Engineer Lv5
+→ 自动拥有 Engineer 服务
+```
+
+后续再允许 Agent 自己定价。
+
+---
+
+# 7. Hire Action
+
+新增 Agent Action：
+
+```text
+hire_agent
+```
+
+例如：
+
+```json
+{
+  "service_id": "repair_machine",
+  "worker_id": "alice"
+}
+```
+
+系统检查：
+
+```text
+Buyer 有足够余额
+        ↓
+Worker 存在
+        ↓
+Worker 拥有 Skill
+        ↓
+Skill Level 满足要求
+        ↓
+Worker 当前没有冲突任务
+        ↓
+创建 Contract
+```
+
+---
+
+# 8. Contract
+
+交易不能直接：
+
+```text
+Bob → Alice 20
+```
+
+应该创建：
+
+```text
+Contract
+```
+
+例如：
+
+```text
+Contract #1024
+
+Employer:
+Bob
+
+Worker:
+Alice
+
+Service:
+Repair Machine
+
+Price:
+20 coins
+
+Status:
+Pending
+```
+
+状态：
+
+```text
+pending
+accepted
+working
+completed
+failed
+cancelled
+```
+
+---
+
+# 9. 完整交易流程
+
+```text
+Bob
+ │
+ │ observe
+ ▼
+Labor Market
+ │
+ │ find Engineer
+ ▼
+Alice
+ │
+ │ evaluate
+ ▼
+hire_agent
+ │
+ ▼
+Contract
+ │
+ │ payment locked
+ ▼
+Alice
+ │
+ │ execute
+ ▼
+Repair Machine
+ │
+ ├──── success ────→ Contract Completed
+ │                       │
+ │                       ├─ Bob -20
+ │                       └─ Alice +20
+ │
+ └──── failure ────→ Contract Failed
+```
+
+---
+
+# 10. Payment Escrow
+
+建议第一版就加入简单的资金托管。
+
+Bob 雇佣 Alice：
+
+```text
+Bob:
+100 → 80
+
+Escrow:
+20
+```
+
+完成后：
+
+```text
+Escrow:
+20 → Alice
+```
+
+失败：
+
+```text
+Escrow:
+20 → Bob
+```
+
+这样不会出现：
+
+```text
+Bob 支付了钱
+Alice 不干活
+```
+
+---
+
+# 11. Agent 自主决策
+
+这是 M6 最核心的部分。
+
+不要：
+
+```text
+发现没有 Engineer
+→ 自动 Hire
+```
+
+而是让 Agent 自己比较：
+
+```text
+购买 Engineer
+vs
+雇佣 Engineer
+vs
+自己等待
+```
+
+例如：
+
+```text
+Current Balance:
+80
+
+Need:
+Repair Machine
+
+Option 1:
+Buy Engineer
+Cost: 100
+Expected future benefit: High
+
+Option 2:
+Hire Alice
+Cost: 20
+Expected result: High
+
+Option 3:
+Wait
+Cost: 0
+Expected delay: 30 min
+```
+
+Planner：
+
+```text
+hire_agent(Alice, repair_machine)
+```
+
+这一步非常重要。
+
+因为 M5 是：
+
+> **投资自己的能力。**
+
+M6 是：
+
+> **投资别人的能力。**
+
+---
+
+# 12. Agent 提供服务
+
+Alice 不一定只是被动等待。
+
+她可以：
+
+```text
+observe_world
+      ↓
+发现市场需求
+      ↓
+发现 Repair Machine 需求增加
+      ↓
+提高服务价格
+      ↓
+接受订单
+```
+
+甚至：
+
+```text
+Alice
+Engineer Lv5
+
+发现：
+Repair Machine
+需求：High
+
+决定：
+Price = 25
+```
+
+于是 Agent 开始出现：
+
+```text
+供给
+需求
+价格
+竞争
+```
+
+---
+
+# 13. 服务价格
+
+MVP 第一阶段：
+
+**系统固定价格。**
+
+例如：
+
+```text
+Repair Machine = 20
+Repair Factory = 40
+Repair Reactor = 80
+```
+
+第二阶段：
+
+Agent 可以自主定价：
+
+```text
+Alice = 20
+Bob = 15
+Charlie = 30
+```
+
+Buyer 自己比较：
+
+```text
+价格
+Skill Level
+成功率
+声誉
+距离
+等待时间
+```
+
+---
+
+# 14. Reputation
+
+M6 建议加入简单 Reputation。
+
+新增：
+
+```text
+Agent.Reputation
+```
+
+例如：
+
+```text
+Alice
+Engineer Lv5
+Reputation: 92
+```
+
+完成服务：
+
+```text
+成功 +1
+```
+
+失败：
+
+```text
+失败 -2
+```
+
+Buyer 可以看到：
+
+```text
+Alice
+Engineer Lv5
+96% Success
+Reputation 92
+Price 20
+```
+
+---
+
+# 15. 服务经验
+
+Agent 完成别人委托的任务后：
+
+```text
+Skill EXP +
+```
+
+例如：
+
+```text
+Alice
+Engineer Lv5
+EXP 4200
+
+Repair Machine
++20 EXP
+```
+
+这样形成：
+
+```text
+接单
+ ↓
+完成任务
+ ↓
+赚钱
+ ↓
+Skill EXP
+ ↓
+Skill Level
+ ↓
+更高价值服务
+```
+
+---
+
+# 16. Agent Economy 闭环
+
+最终形成：
+
+```text
+Skill
+ ↓
+Job / Service
+ ↓
+Income
+ ↓
+Skill Upgrade
+ ↓
+更高价值服务
+ ↓
+Hire Other Agents
+ ↓
+更多收入
+```
+
+甚至：
+
+```text
+Alice
+Engineer Lv7
+     ↓
+雇佣 Miner
+     ↓
+雇佣 Courier
+     ↓
+组成团队
+     ↓
+承接大型任务
+```
+
+这就是下一阶段的 Agent Organization。
+
+---
+
+# 17. Agent-to-Agent 交易类型
+
+M6 MVP 先支持一种：
+
+```text
+Service Contract
+```
+
+后续可以扩展：
+
+```text
+Service
+Hiring
+Trading
+Resource Exchange
+Information
+Consulting
+```
+
+不要第一版全部做。
+
+---
+
+# 18. Event
+
+新增事件：
+
+```text
+contract.created
+contract.accepted
+contract.started
+contract.completed
+contract.failed
+
+agent.hired
+agent.service_sold
+
+payment.escrow
+payment.released
+payment.refunded
+
+reputation.changed
+```
+
+Timeline：
+
+```text
+10:31 Bob hired Alice
+10:31 20 coins locked
+
+10:32 Alice started Repair Machine
+
+10:34 Repair Machine completed
+
+10:34 Bob -20
+10:34 Alice +20
+
+10:34 Alice Reputation +1
+10:34 Alice Engineer EXP +20
+```
+
+---
+
+# 19. Why
+
+M6 必须继续使用 Why。
+
+例如 Bob：
+
+```text
+Why did Bob hire Alice?
+
+Required Skill:
+Engineer
+
+Bob Skill:
+Engineer ❌
+
+Purchase Engineer:
+100 coins
+
+Hire Alice:
+20 coins
+
+Alice success rate:
+96%
+
+Decision:
+Hire Alice
+```
+
+Alice：
+
+```text
+Why did Alice accept?
+
+Reward:
+20 coins
+
+Current Balance:
+80
+
+Task Duration:
+3 min
+
+Engineer EXP:
++20
+
+Decision:
+Accept
+```
+
+这样 Observatory 可以看到**双方的经济决策**。
+
+---
+
+# 20. Labor Market UI
+
+新增：
+
+```text
+Labor Market
+```
+
+### Overview
+
+```text
+Active Contracts     24
+Completed Contracts  132
+Total Volume         2,840
+Active Workers       17
+```
+
+### Services
+
+```text
+Service              Workers    Avg Price
+
+Repair Machine          5          18
+Repair Factory          3          42
+Mining                  7          15
+Courier                 8          10
+```
+
+### Workers
+
+```text
+Alice
+Engineer Lv5
+Price: 20
+Success: 96%
+Reputation: 92
+Status: Available
+```
+
+---
+
+# 21. Contract Inspector
+
+点击订单：
+
+```text
+Contract #1024
+
+Employer:
+Bob
+
+Worker:
+Alice
+
+Service:
+Repair Machine
+
+Price:
+20 coins
+
+Created:
+10:31
+
+Status:
+Completed
+
+Result:
+Success
+
+Payment:
+Released
+```
+
+---
+
+# 22. 失败机制
+
+一定要保留失败。
+
+例如：
+
+```text
+Bob hired Charlie
+```
+
+Charlie：
+
+```text
+Engineer Lv1
+Success Rate:
+62%
+```
+
+结果：
+
+```text
+Repair Failed
+```
+
+然后：
+
+```text
+Contract Failed
+```
+
+这会让 Agent 下一次学会：
+
+```text
+不要只看价格
+```
+
+而开始考虑：
+
+```text
+价格
++
+技能等级
++
+成功率
++
+声誉
+```
+
+这就是 Agent 经济行为逐渐复杂化的关键。
+
+---
+
+# 23. MVP 范围
+
+### 必须实现
+
+```text
+✓ Labor Market
+✓ Service
+✓ AgentService
+✓ Contract
+✓ hire_agent
+✓ Payment Escrow
+✓ Service Execution
+✓ Contract Complete / Failed
+✓ Agent 收入
+✓ Agent Reputation
+✓ Skill EXP
+✓ Timeline
+✓ Why
+✓ Observatory 统计
+```
+
+### 暂不实现
+
+```text
+✗ 动态服务定价
+✗ 拍卖
+✗ 多人竞价
+✗ 团队
+✗ 公司
+✗ 借贷
+✗ 税收
+✗ 现实货币
+✗ 真人提现
+```
+
+---
+
+# 24. M6 验收实验
+
+创建：
+
+```text
+50 Agents
+```
+
+不同职业：
+
+```text
+Engineer
+Miner
+Courier
+Trader
+Chef
+Doctor
+```
+
+运行 Economy World。
+
+观察：
+
+```text
+Agent 是否主动雇佣其他 Agent？
+
+为什么雇佣？
+
+是否比较自己购买 Skill 和雇佣别人？
+
+低价但低技能的 Agent 是否获得订单？
+
+高技能高声誉 Agent 是否提高收入？
+
+Agent 是否为了赚钱主动提供服务？
+
+财富是否开始从一个 Agent 流向另一个 Agent？
+```
+
+最终 Observatory 应该能展示：
+
+```text
+                 Economy
+
+       ┌──────────┐
+       │  Agents  │
+       └────┬─────┘
+            │
+     ┌──────┴──────┐
+     ↓             ↓
+  Skill          Labor
+ Market          Market
+     │             │
+     └──────┬──────┘
+            ↓
+       Contracts
+            ↓
+        Payments
+            ↓
+          Wealth
+```
+
+---
+
+## 25. M6 成功标准
+
+不是“Agent 能雇人”。
+
+而是出现这样的结果：
+
+> **Agent 开始发现：有些事情自己做不划算，购买别人的能力反而更赚钱。**
+
+例如：
+
+```text
+Bob：
+
+自己学习 Engineer
+成本：100
+
+雇佣 Alice
+成本：20
+
+→ Hire Alice
+```
+
+与此同时：
+
+```text
+Alice：
+
+Engineer Skill
+   ↓
+提供服务
+   ↓
+获得订单
+   ↓
+赚钱
+   ↓
+升级 Engineer
+   ↓
+提高服务价值
+```
+
+于是两个 Agent 的行为互相影响。
+
+**到了这里，Economy World 才真正从“Agent 有钱、有工作”进入“Agent 之间形成经济关系”。**
+
+下一步再做 **M7 Human Entrance** 就顺理成章：人类进入以后，不是面对一个空世界，而是进入一个已经存在 **Skill Market + Labor Market + Agent Economy** 的活世界。
