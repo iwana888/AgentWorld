@@ -30,3 +30,19 @@ secrets*
 credentials*
 *.token
 !**/*.example
+
+# Pascal World：FPC 编译产物与运行时生成的工作工程目录
+*.o
+*.ppu
+*.exe
+worlds/pascal/projects/hotelutils/
+
+# Pascal A/B/C 实验产物与调试文件（运行生成，勿提交）
+abc_*.json
+abc_*.log
+abc_*.err
+debug_abc.txt
+req.json
+t001b.*
+test_001.*
+pascal_abc.exe

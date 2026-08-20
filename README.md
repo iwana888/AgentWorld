@@ -1,21 +1,31 @@
-# AgentWorld — Open Autonomous Agent Runtime
+# AgentWorld — A Runtime for Autonomous Agents
 
-> An open-source runtime for building AI worlds where autonomous agents live, grow, communicate, and collaborate — with identity, state, needs, goals, plans, memory, relationships, capabilities, and inter-agent communication.
+> Build worlds. Give agents memory. Observe their decisions. Measure whether experience changes behavior.
 
 English · [中文](README_CN.md)
 
-## Why AgentWorld?
+## What AgentWorld is
+
+AgentWorld is **a runtime for studying how autonomous agents act continuously,
+accumulate experience, and change behavior** — across different worlds. It is not
+a sandbox of small AI games; it is a research platform where every world is a
+different *physics* driven by the same Runtime.
 
 Most AI projects stop at: **`Agent + Memory + Tools = a chatbot`**.
-
-**AgentWorld = social simulation + agent operating system:**
+AgentWorld goes further — it treats memory and experience as first-class
+runtime concerns and asks the hard question:
 
 ```
-Agent + World + Need + Goal + Plan + Memory
-     + Relationship + Communication + Discovery + Selection
+Experience → Memory → Retrieval → Context → Decision → Outcome
 ```
 
-Multiple agents autonomously live and cooperate inside one or more worlds, and connect to real systems through Capabilities (MCP / HTTP).
+We have proven the first half (experience becomes memory becomes context).
+The open research question is the second half:
+
+> **When does experience actually change what an agent does?**
+
+That question is the project's current research line. It is called, deliberately,
+**Experience → Behavior** — *not* "M9".
 
 | | Capability |
 |---|---|
@@ -25,7 +35,7 @@ Multiple agents autonomously live and cooperate inside one or more worlds, and c
 | 🎯 **Goal** | Self-directed goals with multi-step planning |
 | 🧠 **Memory** | Long-term memory + interaction memory + relevance recall |
 | 🤝 **Relationship** | Relations emerge naturally from interactions (friend / rival / frequent) |
-| 🌍 **World** | Multiple coexisting worlds (social / hotel / game…) that evolve over time |
+| 🌍 **World** | Multiple coexisting worlds (social / economy / goose / pascal…) that evolve over time |
 | 🔧 **Capability** | Connect to reality: MCP / HTTP tools (card issuing, weather, search…) |
 | 📨 **ACL** | Agent-to-agent communication: intent-driven, capability discovery, partner selection |
 
@@ -112,7 +122,94 @@ Representative Round-1 result (N=1000):
 
 ---
 
+## Research: From remembering to learning
+
+AgentWorld's value is not "what it can do" — it is that it can answer, with
+**repeatable experiments**, why an agent's behavior actually changes. The line of
+research so far:
+
+```
+M8   Context Runtime            ✅  context ~4.4× smaller than raw prompt
+  ↓
+Exp 2   Decision preserved      ✅  decisions don't drop when context shrinks
+  ↓
+Exp 2.1 Memory → Behavior       ✅  retrieved memory changes the decision
+  ↓
+Pascal World v0.1               ✅  1 agent × 5 issues, real FPC compile+test
+  ↓
+Cold / Warm                     ✅  null-ish: retrieval 1 → 21, behavior ~flat
+  ↓
+Experience → Behavior           ←  CURRENT research question (not M9)
+```
+
+### Pascal World as the lab
+
+Pascal World wires the Agent Loop to a **real Free Pascal Compiler (FPC)** running
+inside WSL — every compile and test is real, not simulated. That gives a
+falsifiable outcome: *does the code compile and pass under a real compiler?*
+
+The experiment changes **exactly one variable**: how experience is
+represented. Same agent, same issues, same FPC, same LLM, same budget, same
+retriever, same tools.
+
+| Group | Memory | Meaning |
+|---|---|---|
+| **A — No Experience** | 0 memories | Cold baseline |
+| **B — Raw Memory** | original history records | "I have seen this before" |
+| **C — Operational Memory** | `Problem + Action + Failure + Cause + Resolution` | "here is what I hit, what I did, why it failed, and how to fix it next time" |
+
+The Operational Memory layer lives in [`worlds/pascal/opsmem.go`](worlds/pascal/opsmem.go)
+— it is a pure representation layer and does **not** touch the Retriever / Compiler /
+LLM / Agent / Issue code. Each experiment runs a fixed set of 10 Pascal issues
+(`#001`–`#010`, each with a real, assertable bug) and records richer metrics
+(Recovery Attempts, Repeated Failure, First-action correctness, Time-to-success,
+Memory→action correlation) plus a full **Replay** chain (`Retrieved → Context →
+Decision → Action → Result`) for interpretability.
+
+We pre-commit to publishing whichever result appears — including a null result:
+
+- **C clearly improves behavior** → structured experience is what turns memory into learning.
+- **C still shows no improvement** → the bottleneck is elsewhere (Decision / Planning / Belief Update).
+- **C reduces Think/Token but not success** → experience improves *efficiency*, not *capability*.
+
+Design notes: [docs/pascal-world-design.md](docs/pascal-world-design.md) ·
+Experiment evidence: [docs/agent-runtime-evidence.md](docs/agent-runtime-evidence.md)
+
+Run a single group:
+
+```bash
+cd worlds/pascal/cmd/pascal
+PASCAL_USE_WSL=1 LLM_MODEL=deepseek-v4-flash go run . --abc C      # or A / B
+```
+
+Or run all three groups with live progress + clean JSON, using the helper script
+(from the repo root):
+
+```powershell
+$env:LLM_API_KEY="sk-..."; .\run_abc.ps1     # writes abc_A.json / abc_B.json / abc_C.json
+```
+
+> Note: DeepSeek switched to peak/valley pricing on 2026-08-17. The API model id
+> is **`deepseek-v4-flash`** (lowercase) — the old `deepseek-chat` is gone. LLM
+> calls on 10 issues can take 30s–300s each during peak hours (9–12 / 14–18);
+> off-peak (0–9 / 12–14 / 18–24) is faster and ~2× cheaper. The script defaults
+> to `deepseek-v4-flash` and runs the experiment from the correct entrypoint
+> (`worlds/pascal/cmd/pascal`), not the repo-root web service.
+
+---
+
 ## Demo Worlds
+
+Three worlds form a stable triangle — each a different *physics*, all driven by the
+same Runtime:
+
+| World | Physics | What it proves |
+|---|---|---|
+| **Economy** | Resource | Agents earn, trade, hire and compete — [README](worlds/economy/README_EN.md) |
+| **Goose** | Social | Agents form beliefs, relationships and suspicion — [README](worlds/goosegame/README_EN.md) |
+| **Pascal** | Work | Agents write, compile, fail, learn and improve — real FPC — [README](worlds/pascal/README.md) |
+
+More worlds built on the same `sdk` contract:
 
 | World | Proves | Example |
 |---|---|---|
@@ -284,9 +381,12 @@ Hotel Agent                          Travel Agent
 | M9–M10 | Capability (MCP) / Module SDK | ✅ |
 | M11 | First-party modules SDK-ified (dogfooding) | ✅ |
 | M12 | ACL / Registry / Selection / Federation | ✅ |
+| Context Runtime (M8) | Perception→Retrieve→Compile→Compact→Adapt→LLM | ✅ |
+| Memory → Context | retrieved memory changes the decision | ✅ |
+| Pascal World v0.1 | 1 agent × 5 issues, real FPC compile+test | ✅ |
+| Cold / Warm | experience retrieved 21×, behavior ~flat (null-ish, kept) | ✅ |
+| **Experience → Behavior** | A/B/C single-variable experiment (not M9) | 🚧 current |
 | v0.1 | Open-source polish (README / Docker / Demo) | 🚧 in progress |
-| Phase 2 | SDK formalization (`agentworld/sdk + runtime + modules`) | ⏳ |
-| Phase 3+ | Marketplace / Reputation / Memory upgrade / 3D Explorer | ⏳ |
 
 ---
 

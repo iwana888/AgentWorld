@@ -5,7 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -109,14 +111,15 @@ func (c *Client) Decide(ctx context.Context, system, user string) (*Decision, er
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
 
-	hc := &http.Client{Timeout: 25 * time.Second}
+	hc := &http.Client{Timeout: 300 * time.Second}
 	resp, err := hc.Do(req)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("llm http %d", resp.StatusCode)
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("llm http %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	var cr chatResp
 	if err := json.NewDecoder(resp.Body).Decode(&cr); err != nil {
