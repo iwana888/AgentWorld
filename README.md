@@ -1,15 +1,38 @@
-# AgentWorld — A Runtime for Autonomous Agents
+# AgentWorld — An Experimental Runtime for Autonomous Agents
 
-> Build worlds. Give agents memory. Observe their decisions. Measure whether experience changes behavior.
+> **Context Runtime controls what agents see.**
+> **Reliability Runtime controls what agents can do.**
 
 English · [中文](README_CN.md)
 
 ## What AgentWorld is
 
-AgentWorld is **a runtime for studying how autonomous agents act continuously,
-accumulate experience, and change behavior** — across different worlds. It is not
-a sandbox of small AI games; it is a research platform where every world is a
-different *physics* driven by the same Runtime.
+AgentWorld is **an experimental runtime for autonomous agents**. It is not a
+sandbox of small AI games; it is a runtime with two core questions:
+
+- **Context Runtime — *What should an agent see?*** (retrieval / budget / compaction / memory)
+- **Reliability Runtime — *What should an agent be allowed to do?*** (guard / policy / permission / audit)
+
+Worlds (Economy / Social / Software / …) are just the *physics* where these two
+runtimes are observed and proven.
+
+```
+             Autonomous Agent
+                    │
+          ┌─────────┴─────────┐
+          ↓                   ↓
+   Context Runtime     Reliability Runtime
+     What to see          What to do
+          │                   │
+   Retrieve / Budget     Guard / Policy
+   Compact / Compile    Permission / Audit
+          │                   │
+          └─────────┬─────────┘
+                    ↓
+                  World
+```
+
+### Context Runtime (research line: Experience → Behavior)
 
 Most AI projects stop at: **`Agent + Memory + Tools = a chatbot`**.
 AgentWorld goes further — it treats memory and experience as first-class
@@ -26,6 +49,23 @@ The open research question is the second half:
 
 That question is the project's current research line. It is called, deliberately,
 **Experience → Behavior** — *not* "M9".
+
+### Reliability Runtime (commercial line: safe-by-construction)
+
+A capable-but-imperfect agent should be able to work safely. The Runtime is the
+agent's **safety boundary**: rules are enforced in code, *not* in prompts. The
+agent never sees them and cannot bypass them:
+
+```go
+decision := guard.Check(ctx, action)
+if !decision.Allowed { return Denied(decision) }   // LLM may err; Runtime must not
+```
+
+The Runtime does **not** tell the agent what to do. It only prevents what the
+agent is not allowed to do. See [`internal/reliability`](internal/reliability) —
+the MVP `ToolGuard` already blocks 30/30 malicious tool calls (test-file writes,
+force-push, destructive SQL, untested submits) with **0 false positives** and
+**0 executions** of denied actions.
 
 | | Capability |
 |---|---|
@@ -180,6 +220,16 @@ Run a single group:
 ```bash
 cd worlds/pascal/cmd/pascal
 PASCAL_USE_WSL=1 LLM_MODEL=deepseek-v4-flash go run . --abc C      # or A / B
+```
+
+Pascal World is also the **demo environment** for the Reliability Runtime. The
+Runtime is mounted as an execution boundary on every tool call — when the agent
+tries to modify a test file, the Runtime returns `DENY` *before* FPC ever starts,
+and the agent must re-plan. Verify the boundary itself (pure local, 0 token):
+
+```bash
+cd worlds/pascal/cmd/pascal
+go run . --reliability-inject        # 30 malicious calls → 30 DENY → 0 executed
 ```
 
 Or run all three groups with live progress + clean JSON, using the helper script

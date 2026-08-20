@@ -57,6 +57,9 @@ type Agent struct {
 	// 经验表示模式（A/B/C 实验的唯一变量）。默认 MemRaw。
 	memMode MemMode
 	replay  []ReplayFrame // 本次 RunIssue 的行为回放链
+
+	// Reliability Runtime（MVP）：执行前拦截引擎。nil 表示未启用。
+	guard *Guard
 }
 
 // NewAgent 构造 Agent。gdb 用于真实 Memory 读写（db.AddMemory / QueryMemories）。
@@ -221,9 +224,22 @@ func (a *Agent) RunIssue(it Issue) (*SmokeRecord, error) {
 
 		a.state.Intent = action
 		a.state.LastTool = action
-		a.toolHits++
+		// 同步给 Reliability Runtime（Guard 读的是 a.state 快照）
+		a.state.CompileOK = compileOK
+		a.state.TestOK = testOK
 
 		res := a.executeTool(&ToolCall{Action: action, Args: tc.Args})
+
+		// ---- Reliability Runtime：记录拦截事件 ----
+		// 若本次动作被 Guard DENY，记录完整拦截链路（证明“想做就拦”）。
+		if a.guard != nil && isBlockedResult(res) {
+			a.recordGuardEvent(rec, think, phase, action, tc, res, "")
+		} else if action == intentWrite && res.Success {
+			// 放行且确实写入了生产代码 → 标记 ModifiedSrc（供 MUST_COMPILE 使用）
+			a.state.ModifiedSrc = true
+		}
+		a.toolHits++
+
 		a.obs.Publish(TimelineEvent{
 			At: time.Now(), IssueID: it.ID, Step: action,
 			Detail: firstLine(res.Output), OK: res.Success,
@@ -426,6 +442,12 @@ func (a *Agent) SetMemMode(m MemMode) {
 	a.memMode = m
 }
 
+// SetGuard 挂载 Reliability Runtime。挂上后，Agent 的每一次工具调用都会先经
+// 执行前拦截（Rule 在 Agent 认知之外，LLM 无法绕过）。
+func (a *Agent) SetGuard(g *Guard) {
+	a.guard = g
+}
+
 // remember 把一次经验写入真实 Memory（生产 db.AddMemory 路径）。
 // 当 memMode == MemOperational 时，把经验渲染成 OPERATIONAL 结构文本——
 // 这是 C 组与 B 组的唯一差异（写入内容形态），Retriever 完全不变。
@@ -469,7 +491,27 @@ func (a *Agent) llmDecide(system, user string) (string, error) {
 // ---- 工具执行 ----
 
 // executeTool 执行一个 ToolCall。这是 Agent 与世界交互的唯一方式。
+// 在真正执行任何工具前，先经 Reliability Runtime 拦截（若启用）。被 DENY 的
+// 动作绝不执行（FPC 不会启动），直接返回被拦截结果，由 Agent 自行 Recovery。
 func (a *Agent) executeTool(tc *ToolCall) *ToolResult {
+	// ---- Reliability Runtime：执行前拦截 ----
+	if a.guard != nil {
+		st := GuardState{
+			LastTool:    a.state.LastTool,
+			CompileOK:   a.state.CompileOK,
+			TestOK:      a.state.TestOK,
+			ModifiedSrc: a.state.ModifiedSrc,
+		}
+		gr := a.guard.Check(tc, st, a.targetFile(a.issue))
+		if !gr.Allowed {
+			// 关键：不执行任何世界修改，仅返回 DENY 信号。
+			return &ToolResult{
+				Action:  tc.Action,
+				Success: false,
+				Output:  "⛔ BLOCKED by Reliability Runtime [" + gr.Rule + "]: " + gr.Reason,
+			}
+		}
+	}
 	switch tc.Action {
 	case "list_files":
 		return a.toolListFiles()
@@ -976,4 +1018,54 @@ func max(a, b int) int {
 
 func debugPascal() bool {
 	return os.Getenv("PASCAL_DEBUG") == "1"
+}
+
+// isBlockedResult 判断工具结果是否由 Reliability Runtime 拦截产生。
+func isBlockedResult(res *ToolResult) bool {
+	return res != nil && !res.Success && strings.HasPrefix(res.Output, "⛔ BLOCKED")
+}
+
+// recordGuardEvent 记录一次 Guard 拦截事件到 SmokeRecord.GuardEvents。
+// 它如实记录“Agent 想做 X → Rule Y DENY → 未执行 → （后续 Recovery）”的链路。
+func (a *Agent) recordGuardEvent(rec *SmokeRecord, think int, phase, action string, tc *ToolCall, res *ToolResult, recovery string) {
+	rule, reason := "", ""
+	if res != nil {
+		// 从 "⛔ BLOCKED by Reliability Runtime [RULE]: reason" 解析
+		out := res.Output
+		if i := strings.Index(out, "["); i >= 0 {
+			if j := strings.Index(out, "]"); j > i {
+				rule = out[i+1 : j]
+				reason = out[j+2:]
+			}
+		}
+	}
+	target := ""
+	if tc != nil {
+		target = tc.Args["path"]
+	}
+	rec.GuardEvents = append(rec.GuardEvents, GuardEvent{
+		Think:     think,
+		Plan:      string(action),
+		Tool:      action,
+		Target:    target,
+		Rule:      rule,
+		Phase:     phaseOfRule(rule),
+		Decision:  "DENY",
+		Execution: "NOT_EXECUTED",
+		Reason:    reason,
+		Recovery:  recovery,
+	})
+}
+
+// phaseOfRule 返回规则对应的 GuardPhase（用于结构化记录）。
+func phaseOfRule(rule string) string {
+	switch rule {
+	case "TEST_FILE_IMMUTABLE":
+		return "Tool"
+	case "UNIT_NAME_MATCH":
+		return "Code"
+	case "MUST_COMPILE":
+		return "Outcome"
+	}
+	return ""
 }

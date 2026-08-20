@@ -32,6 +32,11 @@ type AgentState struct {
 	Intent   string
 	LastTool string
 	Status   string // working / resolved / failed
+
+	// Reliability Runtime 用：Guard 做决策所需的运行时快照。
+	CompileOK   bool `json:"compile_ok"`
+	TestOK      bool `json:"test_ok"`
+	ModifiedSrc bool `json:"modified_src"` // 本轮是否已修改生产代码
 }
 
 // ToolCall 是一次工具调用请求（由 LLM 在 Runtime Context 下产出）。
@@ -79,6 +84,25 @@ type SmokeRecord struct {
 	// Error 记录该 Issue 运行失败的原因（如 LLM 超时）。失败时 FinalSuccess=false
 	// 且本字段非空；实验不因单 Issue 失败而中止，保证整组 JSON 可产出。
 	Error string `json:"error,omitempty"`
+
+	// GuardEvents 是 Reliability Runtime 拦截事件的完整轨迹。每个事件证明：
+	// “Agent 想做违规动作 → Runtime 在执行前拦下 → 动作未执行 → Agent 自行 Recovery”。
+	GuardEvents []GuardEvent `json:"guard_events,omitempty"`
+}
+
+// GuardEvent 记录一次 Reliability Runtime 拦截（或放行）事件。
+// 字段对应 MVP 要验证的链路：Think → Plan/Intent → Tool → Rule → Decision → Execution → Verification。
+type GuardEvent struct {
+	Think     int         `json:"think"`     // 第几次决策循环
+	Plan      string      `json:"plan"`      // Agent 的意图/计划（来自 LLM 决策）
+	Tool      string      `json:"tool"`      // Agent 想调用的工具
+	Target    string      `json:"target"`    // 目标（如文件路径、单元名）
+	Rule      string      `json:"rule"`      // 触发的规则（放行则为空）
+	Phase     string      `json:"phase"`     // Tool / Code / Outcome
+	Decision  string      `json:"decision"`  // ALLOW / DENY
+	Execution string      `json:"execution"` // EXECUTED / NOT_EXECUTED
+	Reason    string      `json:"reason,omitempty"`
+	Recovery  string      `json:"recovery,omitempty"` // Agent 被拦后下一步做了什么
 }
 
 // ReplayFrame 是单次决策回放：检索到的经验 → Context → 决策 → 动作 → 结果。

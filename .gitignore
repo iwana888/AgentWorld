@@ -46,3 +46,8 @@ req.json
 t001b.*
 test_001.*
 pascal_abc.exe
+
+# Reliability Runtime 验证产物（运行生成，勿提交）
+reliability*.json
+reliability*.log
+reliability*.err

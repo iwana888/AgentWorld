@@ -61,7 +61,8 @@ func (w *World) SmokeTest() ([]*SmokeRecord, error) {
 		}
 		rec, err := w.Agent.RunIssue(it)
 		if err != nil {
-			return records, fmt.Errorf("issue %s: %w", it.ID, err)
+			// 单 Issue 失败不中止整组（高峰偶发超时不该废掉其他 Issues）。
+			rec = &SmokeRecord{Issue: it.ID, FinalSuccess: false, Error: err.Error()}
 		}
 		records = append(records, rec)
 	}
@@ -101,7 +102,7 @@ func (w *World) runPhase(cold bool) ([]*SmokeRecord, error) {
 		}
 		rec, err := w.Agent.RunIssue(it)
 		if err != nil {
-			return records, fmt.Errorf("issue %s: %w", it.ID, err)
+			rec = &SmokeRecord{Issue: it.ID, FinalSuccess: false, Error: err.Error()}
 		}
 		records = append(records, rec)
 	}
