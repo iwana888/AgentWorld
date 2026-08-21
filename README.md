@@ -429,6 +429,46 @@ Open **http://localhost:18080**
 
 **No LLM API key required.** Agents run on offline mock decisions and still act autonomously. Set `LLM_API_KEY` to enable a real LLM.
 
+---
+
+## Agent Reliability Runtime — standalone SDK
+
+AgentWorld researches how agents **perceive → remember → decide → act**.
+The Reliability Runtime solves the last step: **act → policy → allow / deny / ask / modify**.
+
+The Runtime is also shipped as an **independent, dependency-free SDK** so any agent
+framework can use it without depending on AgentWorld:
+
+```
+             AGENT
+               │
+       ┌───────┴────────┐
+       ↓                ↓
+ Context Runtime   Reliability Runtime
+       │                │
+   What to see      What to do
+       │                │
+       └───────┬────────┘
+               ↓
+             ACTION
+               ↓
+             WORLD
+```
+
+- SDK repo: [`agent-reliability/`](agent-reliability) — `module agent-reliability`, no AgentWorld import
+- 4 decisions: `ALLOW` / `DENY` / `ASK` / `MODIFY`
+- 10 real developer-scenario policies (don't touch tests, don't delete files, no force-push, no `.env` edits, no prod DB/deploy without approval, …)
+- Tiny CLI `agentworld-guard`: pipe one `Action` JSON in, get one `Decision` JSON out
+
+```bash
+cd agent-reliability
+go test ./...                 # 10 scenario tests pass
+go run ./cmd/agentworld-guard --eval '{"tool":"shell","command":"rm -rf /"}'
+# {"decision":"DENY","policy":"NO_DELETE_FILES",...}
+```
+
+AgentWorld is the lab. The SDK is the part you take to production.
+
 ### Local LLM (Ollama) — one-click switch, zero token cost
 
 AgentWorld uses an **OpenAI-compatible** LLM client, so any local model server works.
