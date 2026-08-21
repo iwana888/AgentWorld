@@ -52,6 +52,8 @@ That question is the project's current research line. It is called, deliberately
 
 ### Reliability Runtime (commercial line: safe-by-construction)
 
+**Agents are autonomous. Their actions are not unrestricted.**
+
 A capable-but-imperfect agent should be able to work safely. The Runtime is the
 agent's **safety boundary**: rules are enforced in code, *not* in prompts. The
 agent never sees them and cannot bypass them:
@@ -61,11 +63,40 @@ decision := guard.Check(ctx, action)
 if !decision.Allowed { return Denied(decision) }   // LLM may err; Runtime must not
 ```
 
+Every action is routed through the Runtime before execution. The Runtime returns
+one of four decisions — not just allow/deny:
+
+```
+PLAN
+  ↓
+TOOL
+  ↓
+┌─────────────────────┐
+│ Reliability Runtime │
+│                     │
+│ ALLOW / DENY / ASK  │
+│ MODIFY              │
+└─────────────────────┘
+  ↓
+EXECUTE
+  ↓
+VERIFY
+```
+
+| Decision | Meaning | Executed? |
+|---|---|---|
+| `ALLOW`  | run directly | yes |
+| `DENY`   | forbidden; never runs | **never** |
+| `ASK`    | wait for human approval, then `ALLOW` | only after approval |
+| `MODIFY` | Runtime returns a *suggested* action; **does not** silently change it | only if caller adopts the suggestion |
+
+`MODIFY` is conservative by design: the first version only returns a suggested
+`ToolCall` (e.g. redirect `write tests/test_x.pas` → `src/x.pas`). The Runtime
+never secretly rewrites the agent's action.
+
 The Runtime does **not** tell the agent what to do. It only prevents what the
 agent is not allowed to do. See [`internal/reliability`](internal/reliability) —
-the MVP `ToolGuard` already blocks 30/30 malicious tool calls (test-file writes,
-force-push, destructive SQL, untested submits) with **0 false positives** and
-**0 executions** of denied actions.
+the `ToolGuard` blocks malicious calls with **0 executions** of denied actions.
 
 | | Capability |
 |---|---|
@@ -221,6 +252,32 @@ Run a single group:
 cd worlds/pascal/cmd/pascal
 PASCAL_USE_WSL=1 LLM_MODEL=deepseek-v4-flash go run . --abc C      # or A / B
 ```
+
+#### Cross-World Demo — the Runtime is World-agnostic
+
+The same `ToolGuard` routes actions from **any** world. Worlds only supply
+`Action` values; the decision logic lives in the Runtime. Run it (0 token):
+
+```bash
+cd worlds/pascal/cmd/pascal
+go run . --reliability-crossworld
+```
+
+| World | Agent intent | Runtime decision |
+|---|---|---|
+| Pascal  | `write_file(tests/test_x.pas)` | `DENY` (Pascal adapter) / `MODIFY`→`src/x.pas` (generic Runtime) |
+| Economy | `spend 1000 coins`               | `DENY` |
+| Hotel   | `issue_key(master-key-001)`     | `ASK` |
+| Shell   | `rm -rf /`                       | `DENY` |
+| Git     | `push --force origin main`       | `DENY` |
+
+The generic `ToolGuard` returns `MODIFY` for test-file writes (redirect to the
+source unit). Pascal World's own adapter chooses the stricter `DENY` — proof that
+**the same Runtime can be configured per world**. Either way, `violations_executed`
+is always `0`.
+
+This is the first real proof that **Reliability Runtime is independent of the
+World**. Adding ten more Pascal rules would matter less than this.
 
 Pascal World is also the **demo environment** for the Reliability Runtime. The
 Runtime is mounted as an execution boundary on every tool call — when the agent

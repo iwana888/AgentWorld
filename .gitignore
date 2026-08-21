@@ -53,6 +53,7 @@ reliability*.log
 reliability*.err
 # 但保留一份正式 Demo 结果作为产品证据
 !worlds/pascal/reliability_demo_result.json
+!worlds/pascal/crossworld_result.json
 
 # Pascal World 调试 / Demo 临时产物（运行生成，勿提交）
 run_demo_bg*.ps1
@@ -74,4 +75,6 @@ reliability_demo_final.log
 reliability_demo_final.err
 demo_*.json
 pascal_demo.exe
+worlds/pascal/cmd/pascal/crossworld_result.json
+worlds/pascal/cmd/pascal/crossworld_*.log
 
