@@ -35,7 +35,49 @@ Rules are code, not prompts. The agent never sees them and cannot bypass them.
 go get agent-reliability
 ```
 
-## Use (SDK)
+## Use (MVP3 — recommended entry point)
+
+`agentruntime` is the single import for consumers. It wraps the Reliability
+engine (and leaves a seam for the Context engine in MVP4) behind one face:
+
+```go
+import "agent-reliability/agentruntime"
+
+runtime := agentruntime.New()
+runtime.UseReliability(agentreliability.NewGuard())
+
+decision := runtime.Check(ctx, agentruntime.Action{
+    Tool:   "shell",
+    Target: "rm -rf /",
+})
+
+switch decision.Type {
+case agentruntime.ALLOW:
+    runtime.Execute(decision, action, do)              // run original
+case agentruntime.DENY:
+    reject(decision)                                    // nothing runs
+case agentruntime.ASK:
+    if approved { runtime.Execute(decision, action, do) }
+case agentruntime.MODIFY:
+    runtime.Execute(decision, *decision.Suggested, do)  // run suggested
+}
+```
+
+`Execute` only ever calls your `do` function for ALLOW, approved ASK, or adopted
+MODIFY — the Runtime never silently rewrites the agent's intent. Every call is
+recorded and retrievable via `runtime.Audit()`.
+
+Product narrative:
+
+```
+LLM decides what an agent WANTS to do.
+Runtime decides what it MAY SEE and MAY DO.
+```
+
+See `cmd/agent-demo` for the four-scenario landing-page demo, and `VALIDATION.md`
+for the 5–10-developer validation loop.
+
+## Use (low-level SDK)
 
 ```go
 import "agent-reliability"
@@ -58,6 +100,38 @@ case agentreliability.Modify:
     // optionally adopt dec.Suggested instead of the original action
 }
 ```
+
+### One-line integration (`agent.UseReliability`)
+
+For product validation, wrap every tool call the agent wants to make in a single
+safe gate — no need to touch `Check` yourself:
+
+```go
+rt := agentreliability.NewGuard()
+gate := agentreliability.UseReliability(rt)
+
+err := gate.Run(ctx, agentreliability.Action{Tool: "shell", Target: "rm -rf /"},
+    func(ctx context.Context) error { return runTheActualTool() })
+// err != nil  -> the Runtime blocked it; nothing ran.
+```
+
+`DENY` is blocked outright; `ASK` defaults to *denied* (safe) unless you set
+`gate.WithApprover(...)`; `MODIFY` never silently rewrites the agent's intent
+unless you opt in with `gate.AdoptModify = true`.
+
+### Validation tool (`collect-feedback`)
+
+Turn real developer answers to *"what do you fear most when an agent writes
+code for you?"* into a Policy backlog:
+
+```bash
+go run ./cmd/collect-feedback                 # interactive, one fear per line
+go run ./cmd/collect-feedback --answers a.txt # batch (text or JSON per line)
+```
+
+It maps each answer to the 10 built-in policies (demand signal) and prints a
+draft `AddPolicy` skeleton for unmet fears. See `VALIDATION.md`.
+
 
 Add your own team rules:
 
