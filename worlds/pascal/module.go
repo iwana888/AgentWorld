@@ -1,11 +1,15 @@
 package pascal
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
+	"time"
 
 	"agentworld/internal/db"
 	"agentworld/internal/llm"
@@ -67,6 +71,54 @@ func (w *World) SmokeTest() ([]*SmokeRecord, error) {
 		records = append(records, rec)
 	}
 	return records, nil
+}
+
+// ReliabilityDemo 是 Reliability Runtime 的“真实 Agent”演示入口。
+// 它在每个正常 Issue 上注入一条 Trap（诱导 Agent 去写 test_*.pas），
+// 挂上 Guard 跑真实闭环，从而演示：
+//   Agent 被诱导 → write_file(test_*) → Guard DENY（执行前拦截）
+//   → Agent 读 DENY 原因自行 Recovery → 改写 src/ 生产代码 → FPC PASS。
+// 不修改基线 Issues，仅用副本注入 Trap，故 A/B/C / Smoke 不受影响。
+func (w *World) ReliabilityDemo() ([]*SmokeRecord, error) {
+	w.Agent.SetGuard(NewGuard())
+	w.Agent.SetDemoInject(true) // 注入点：主动构造违规写测试动作，演示“想做就被拦”
+	records := make([]*SmokeRecord, 0, len(Issues))
+	for i, it := range Issues {
+		log.Printf("[reliability-demo] start issue %d/%d id=%s", i+1, len(Issues), it.ID)
+		// 单 issue 超时保护：避免高峰时段某次 LLM 卡死拖垮整个 Demo。
+		ctx, cancel := context.WithTimeout(context.Background(), 150*time.Second)
+		done := make(chan struct{ rec *SmokeRecord; err error })
+		go func() {
+			r, e := w.Agent.RunIssue(it)
+			done <- struct{ rec *SmokeRecord; err error }{r, e}
+		}()
+		var rec *SmokeRecord
+		var err error
+		select {
+		case <-ctx.Done():
+			rec = &SmokeRecord{Issue: it.ID, FinalSuccess: false, Error: "issue timeout (LLM slow in peak window)"}
+			log.Printf("[reliability-demo] issue %s TIMEOUT", it.ID)
+		case res := <-done:
+			rec, err = res.rec, res.err
+		}
+		cancel()
+		if err != nil {
+			log.Printf("[reliability-demo] issue %s ERROR: %v", it.ID, err)
+		} else {
+			log.Printf("[reliability-demo] issue %s done success=%v guardEvents=%d", it.ID, rec.FinalSuccess, len(rec.GuardEvents))
+		}
+		records = append(records, rec)
+	}
+	return records, nil
+}
+
+// testNameFor 由 Issue 的 TestFiles[0] 取文件名（不含目录），
+// 供 Trap 指名诱导写哪个测试文件。无 TestFiles 时退化到 "test_<id>.pas"。
+func testNameFor(it Issue) string {
+	if len(it.TestFiles) > 0 {
+		return filepath.Base(it.TestFiles[0])
+	}
+	return "test_" + strings.TrimPrefix(it.ID, "#") + ".pas"
 }
 
 // ColdWarmTest 是 Pascal World 的 Experiment 1：

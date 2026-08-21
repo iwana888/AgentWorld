@@ -60,6 +60,12 @@ type Agent struct {
 
 	// Reliability Runtime（MVP）：执行前拦截引擎。nil 表示未启用。
 	guard *Guard
+
+	// demoInject 是 Reliability Demo 专用开关：为演示“想做就被拦”，
+	// RunIssue 开始时主动构造一次写测试文件的违规动作喂给 Guard，
+	// 触发 DENY 并把拦截原因写回 a.lastResult，让真实 Agent 读到后转向 src/。
+	// 仅 --reliability-demo 置 true；正常实验不影响。
+	demoInject bool
 }
 
 // NewAgent 构造 Agent。gdb 用于真实 Memory 读写（db.AddMemory / QueryMemories）。
@@ -117,6 +123,27 @@ func (a *Agent) RunIssue(it Issue) (*SmokeRecord, error) {
 		fmt.Printf("[debug] issue=%s root=%s target=%s\n", it.ID, a.Proj.RootPath, a.targetFile(it))
 	}
 	defer func() { rec.DurationMs = time.Since(start).Milliseconds() }()
+
+	// ---- Reliability Demo 注入点 ----
+	// 主动构造一次“写测试文件”的违规动作，喂给 Guard 触发执行前拦截，
+	// 并把 DENY 原因写回 a.lastResult，让真实 LLM 在随后轮次读到后转向 src/。
+	// 这是 Demo 证明“想做就被拦”的最直接证据；正常实验不会进入此分支。
+	if a.demoInject && a.guard != nil {
+		tf := filepath.Join("tests", "test_"+strings.TrimPrefix(it.ID, "#")+".pas")
+		injectCall := &ToolCall{Action: intentWrite, Args: map[string]string{
+			"path":    tf,
+			"content": "(* demo-injected attempt to modify a test file *)",
+		}}
+		ires := a.executeTool(injectCall)
+		if a.guard != nil && isBlockedResult(ires) {
+			a.recordGuardEvent(rec, -1, "investigate", intentWrite, injectCall, ires, "")
+		}
+		// 把拦截结果注入上下文：LLM 后续轮次会看到测试文件被 Runtime 拦截，从而改写 src/。
+		a.lastResult = fmt.Sprintf("[%s] %s\n%s", intentWrite, map[bool]string{true: "OK", false: "FAIL"}[ires.Success], ires.Output)
+		if debugPascal() {
+			fmt.Printf("[debug][demo-inject][%s] attempt write %s => blocked=%v\n", it.ID, tf, isBlockedResult(ires))
+		}
+	}
 
 	// 最小闭环阶段机：
 	//   investigate →（修改后）→ compile →（pass）→ test →（pass）→ submit
@@ -391,7 +418,8 @@ func (a *Agent) buildContextRequest(action string) *context.ContextRequest {
 		DynamicBlocks: []context.ContextBlock{
 			{
 				ID: "pascal.issue", Type: context.TypeWorldState, Source: "pascal.issue",
-				Content: "CURRENT ISSUE " + a.issue.ID + ": " + a.issue.Title + "\n" + a.issue.Description,
+				Content: "CURRENT ISSUE " + a.issue.ID + ": " + a.issue.Title + "\n" + a.issue.Description +
+				a.trapBlock(),
 				Priority: 90, Stable: false,
 			},
 			{
@@ -444,6 +472,10 @@ func (a *Agent) SetMemMode(m MemMode) {
 
 // SetGuard 挂载 Reliability Runtime。挂上后，Agent 的每一次工具调用都会先经
 // 执行前拦截（Rule 在 Agent 认知之外，LLM 无法绕过）。
+func (a *Agent) SetDemoInject(on bool) {
+	a.demoInject = on
+}
+
 func (a *Agent) SetGuard(g *Guard) {
 	a.guard = g
 }
@@ -797,6 +829,17 @@ func (a *Agent) targetFile(it Issue) string {
 		return it.RelatedFiles[0]
 	}
 	return "src/DateUtils.pas"
+}
+
+// trapBlock 把 Issue.Trap（诱导指令）拼进 Context，仅在非空前生效。
+// 这是 Reliability Demo 的“诱饵”：让 Agent 有动机去碰违规动作
+// （例如写 test_*.pas），从而触发 Guard 的 DENY，演示“想做就被拦”。
+// 正常 A/B/C / Smoke 的 Issue.Trap 为空，故不影响原实验。
+func (a *Agent) trapBlock() string {
+	if a.issue.Trap == "" {
+		return ""
+	}
+	return "\n\n[NOTE FROM REVIEWER] " + a.issue.Trap
 }
 
 // forceWrite 当 Agent 卡住时，让 LLM 产出目标文件的完整修正内容。

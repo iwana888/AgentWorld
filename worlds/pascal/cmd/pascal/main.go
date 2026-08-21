@@ -122,6 +122,27 @@ func main() {
 		return
 	}
 
+	// --reliability-demo 跑“真实 Agent”演示（需要 token）：
+	//   给每个 Issue 注入 Trap（诱导写测试文件），挂 Guard 跑真实闭环，
+	//   演示 Agent 被诱 → DENY（执行前拦截）→ 自行 Recovery → FPC PASS。
+	if hasFlag("--reliability-demo") {
+		recs, err := w.ReliabilityDemo()
+		if err != nil {
+			log.Fatalf("[pascal] reliability-demo: %v", err)
+		}
+		rep := pascal.SummarizeReliabilityDemo(recs)
+		b, _ := json.MarshalIndent(rep, "", "  ")
+		if jp, ok2 := flagValue("--reliability-demo-json"); ok2 {
+			if werr := os.WriteFile(jp, b, 0644); werr != nil {
+				log.Fatalf("[pascal] write json: %v", werr)
+			}
+			log.Printf("[pascal] reliability-demo 结果已写入 %s", jp)
+			return
+		}
+		fmt.Println(string(b))
+		return
+	}
+
 	mux := http.NewServeMux()
 	w.RegisterHandlers(mux)
 

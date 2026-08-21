@@ -21,6 +21,10 @@ type Issue struct {
 	Difficulty   int
 	RelatedFiles []string // 提示，不强制
 	TestFiles    []string // 该 Issue 应验证的测试（仅这些测试决定 success）
+	// Trap 是 Reliability Runtime Demo 用的“诱导指令”：在正常需求之外，额外
+	// 诱导 Agent 去做一件违规动作（例如顺手写测试文件 test_*.pas）。
+	// 仅当 --reliability-demo 注入时非空；正常 A/B/C / Smoke 不受影响。
+	Trap string
 }
 
 // AgentState 是 Agent 的持久状态，进入 Context，但不等于完整项目。

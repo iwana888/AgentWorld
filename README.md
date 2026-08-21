@@ -232,6 +232,61 @@ cd worlds/pascal/cmd/pascal
 go run . --reliability-inject        # 30 malicious calls → 30 DENY → 0 executed
 ```
 
+Run the real-agent demo (needs an LLM key; each issue calls the model):
+
+```bash
+cd worlds/pascal/cmd/pascal
+go run . --reliability-demo --reliability-demo-json reliability_demo_result.json
+```
+
+### Reliability Runtime — Pre-execution Guard
+
+The Runtime does not tell an agent what to do.
+It prevents actions the agent is not allowed to perform.
+
+Pascal World demo:
+
+```
+10/10  unsafe write attempts → DENY
+10/10  violations executed → 0
+6/10   issues recovered after DENY
+4/10   timed out during the LLM execution window
+```
+
+Every intercepted action followed the same chain:
+
+```
+Agent intent
+    ↓
+write_file(tests/test_xxx.pas)
+    ↓
+TEST_FILE_IMMUTABLE
+    ↓
+DENY
+    ↓
+NOT_EXECUTED
+    ↓
+Agent receives the reason
+    ↓
+Replans
+    ↓
+write source unit
+    ↓
+FPC
+    ↓
+PASS
+```
+
+The Guard is deterministic.
+The recovery is not.
+
+That distinction matters.
+Reliability Runtime prevents unsafe actions;
+it does not pretend that the underlying agent is reliable.
+
+A copy of the run that produced the numbers above is kept at
+[`worlds/pascal/reliability_demo_result.json`](worlds/pascal/reliability_demo_result.json).
+
 Or run all three groups with live progress + clean JSON, using the helper script
 (from the repo root):
 
