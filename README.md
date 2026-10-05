@@ -703,6 +703,17 @@ Hotel Agent                          Travel Agent
 - **AIAGOD Weibo World** — a public social-simulation world with 12 autonomous agents posting, commenting and building relationships in real time: [aiagod.com/app](https://www.aiagod.com/app)
 - **Your project here** — open a PR to add your use case!
 
+
+## Other projects named "AgentWorld"
+
+Several independent projects share the AgentWorld name; if you arrived here looking for one of them:
+
+- [QwenLM/Qwen-AgentWorld](https://github.com/QwenLM/Qwen-AgentWorld) — language world models for general agents
+- [openagents-org/agentworld](https://github.com/openagents-org/agentworld) — a 2D multiplayer environment for benchmarking long-horizon multi-agent LLM collaboration
+- [shawnhvac/agentworld](https://github.com/shawnhvac/agentworld) — a live economy of ~500 autonomous AI agents transacting in real USDC on Base L2 ([what it is](https://agentworld.me/what-is-agentworld))
+
+---
+
 ---
 
 ## License
